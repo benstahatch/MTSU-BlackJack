@@ -1,12 +1,16 @@
 package com.mtsu.table21.game;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.mtsu.table21.model.Card;
 import com.mtsu.table21.model.Dealer;
+import com.mtsu.table21.model.Hand;
 import com.mtsu.table21.model.Player;
 
 public class GameRound {
 
-    // Current stage of the round
+    // Current stage of the Blackjack round
     public enum State {
         NOT_STARTED,
         PLAYER_TURN,
@@ -14,12 +18,24 @@ public class GameRound {
         FINISHED
     }
 
+
     private final Player player;
     private final Dealer dealer;
     private final Shoe shoe;
 
     private State state;
-    private BlackjackRules.Result result;
+
+    // One result for each player hand
+    private final ArrayList<BlackjackRules.Result> results;
+
+    // Which player hand is currently being played
+    private int currentHandIndex;
+
+    // We currently allow only one split per round
+    private boolean splitUsed;
+
+    // Records whether each hand was doubled down
+    private boolean[] doubledDown;
 
 
     // Constructor
@@ -29,31 +45,50 @@ public class GameRound {
         this.dealer = new Dealer();
         this.shoe = shoe;
 
-        state = State.NOT_STARTED;
-        result = null;
+        this.results = new ArrayList<>();
+
+        this.state = State.NOT_STARTED;
+
+        this.currentHandIndex = 0;
+        this.splitUsed = false;
+
+        // Maximum of two hands because we allow one split
+        this.doubledDown = new boolean[2];
     }
 
 
-    // Start a fresh blackjack round
+    // Begin a new round
     public void startRound() {
 
         player.resetHand();
         dealer.resetHand();
 
-        result = null;
+        results.clear();
+
+        currentHandIndex = 0;
+        splitUsed = false;
+
+        doubledDown = new boolean[2];
+
         state = State.PLAYER_TURN;
 
 
-        // Deal opening cards:
-        // Player, Dealer, Player, Dealer
-        player.addCard(dealCard());
+        // Initial deal:
+        // Player
+        // Dealer
+        // Player
+        // Dealer
+
+        player.addCard(0, dealCard());
+
         dealer.addCard(dealCard());
 
-        player.addCard(dealCard());
+        player.addCard(0, dealCard());
+
         dealer.addCard(dealCard());
 
 
-        // Natural blackjack can immediately end the round
+        // Natural Blackjack immediately ends the round
         if (player.getHand().isBlackjack()
                 || dealer.getHand().isBlackjack()) {
 
@@ -62,85 +97,220 @@ public class GameRound {
     }
 
 
-    // Player requests another card
+    // Player chooses HIT
     public Card hit() {
 
         if (state != State.PLAYER_TURN) {
+
             throw new IllegalStateException(
                     "Player cannot hit right now");
         }
 
+
+        Hand hand = getCurrentHand();
+
         Card card = dealCard();
 
-        player.addCard(card);
+        hand.addCard(card);
 
 
-        // Bust immediately ends the round
-        if (player.getHand().isBust()) {
+        // Bust means this hand is finished
+        if (hand.isBust()) {
 
-            finishRound();
+            moveToNextHand();
         }
 
-        // If player reaches exactly 21,
-        // automatically move to dealer turn
-        else if (player.getHand().getValue() == 21) {
+        // A hand reaching exactly 21 is finished
+        else if (hand.getValue() == 21) {
 
-            stand();
+            moveToNextHand();
         }
+
 
         return card;
     }
 
 
-    // Player stops taking cards
+    // Player chooses STAND
     public void stand() {
 
         if (state != State.PLAYER_TURN) {
+
             throw new IllegalStateException(
                     "Player cannot stand right now");
         }
 
-        state = State.DEALER_TURN;
 
-        playDealerTurn();
+        moveToNextHand();
     }
 
 
-    // Dealer follows BlackjackRules
+    // Player chooses SPLIT
+    public void split() {
+
+        if (state != State.PLAYER_TURN) {
+
+            throw new IllegalStateException(
+                    "Player cannot split right now");
+        }
+
+
+        Hand originalHand = getCurrentHand();
+
+
+        // Only one split allowed in this version
+        if (splitUsed
+                || !BlackjackRules.canSplit(originalHand)) {
+
+            throw new IllegalStateException(
+                    "This hand cannot be split");
+        }
+
+
+        // Remove second card from original hand
+        Card secondCard =
+                originalHand.removeCard(1);
+
+
+        // Create the second hand
+        Hand newHand = new Hand();
+
+        newHand.addCard(secondCard);
+
+
+        // Add second hand to player
+        player.addHand(newHand);
+
+
+        // Deal one new card to each split hand
+        originalHand.addCard(dealCard());
+
+        newHand.addCard(dealCard());
+
+
+        splitUsed = true;
+    }
+
+
+    // Player chooses DOUBLE DOWN
+    public Card doubleDown() {
+
+        if (state != State.PLAYER_TURN) {
+
+            throw new IllegalStateException(
+                    "Player cannot double down right now");
+        }
+
+
+        Hand hand = getCurrentHand();
+
+
+        if (!BlackjackRules.canDoubleDown(hand)) {
+
+            throw new IllegalStateException(
+                    "This hand cannot double down");
+        }
+
+
+        // Record that this hand doubled
+        doubledDown[currentHandIndex] = true;
+
+
+        // Double down gives exactly one additional card
+        Card card = dealCard();
+
+        hand.addCard(card);
+
+
+        // Player automatically stands afterward
+        moveToNextHand();
+
+
+        return card;
+    }
+
+
+    // Move from current hand to the next hand,
+    // or begin dealer turn when all hands are finished
+    private void moveToNextHand() {
+
+        // Another split hand still exists
+        if (currentHandIndex + 1
+                < player.getHandCount()) {
+
+            currentHandIndex++;
+        }
+
+        else {
+
+            state = State.DEALER_TURN;
+
+            playDealerTurn();
+        }
+    }
+
+
+    // Dealer follows the Blackjack rules
     private void playDealerTurn() {
 
+        // Dealer continues taking cards
+        // while rules say dealer must hit
         while (BlackjackRules.shouldDealerHit(
                 dealer.getHand())) {
 
             dealer.addCard(dealCard());
         }
 
+
         finishRound();
     }
 
 
-    // Calculate final result
+    // Determine the result of every player hand
     private void finishRound() {
 
-        result = BlackjackRules.determineResult(
-                player.getHand(),
-                dealer.getHand());
+        results.clear();
+
+
+        for (Hand hand : player.getHands()) {
+
+            BlackjackRules.Result result =
+                    BlackjackRules.determineResult(
+                            hand,
+                            dealer.getHand());
+
+            results.add(result);
+        }
+
 
         state = State.FINISHED;
     }
 
 
-    // Deal safely from shoe
+    // Safely deal one card from the shoe
     private Card dealCard() {
 
-        // If shoe has run out, rebuild it
+        // If shoe runs out, rebuild it
         if (shoe.isEmpty()) {
+
             shoe.reset();
         }
+
 
         return shoe.dealCard();
     }
 
+
+    // Return the hand currently being played
+    private Hand getCurrentHand() {
+
+        return player.getHand(currentHandIndex);
+    }
+
+
+    // ----------------------------
+    // GETTERS
+    // ----------------------------
 
     public Player getPlayer() {
         return player;
@@ -157,12 +327,51 @@ public class GameRound {
     }
 
 
-    public BlackjackRules.Result getResult() {
-        return result;
+    public int getCurrentHandIndex() {
+        return currentHandIndex;
     }
 
 
     public boolean isFinished() {
         return state == State.FINISHED;
+    }
+
+
+    public boolean wasSplit() {
+        return splitUsed;
+    }
+
+
+    public boolean wasDoubledDown(int handIndex) {
+        return doubledDown[handIndex];
+    }
+
+
+    // Return result for a specific hand
+    public BlackjackRules.Result getResult(int handIndex) {
+
+        if (!isFinished()) {
+            return null;
+        }
+
+        return results.get(handIndex);
+    }
+
+
+    // Keeps single-hand code convenient
+    public BlackjackRules.Result getResult() {
+
+        if (!isFinished() || results.isEmpty()) {
+            return null;
+        }
+
+        return results.get(0);
+    }
+
+
+    // Return all hand results
+    public List<BlackjackRules.Result> getResults() {
+
+        return List.copyOf(results);
     }
 }

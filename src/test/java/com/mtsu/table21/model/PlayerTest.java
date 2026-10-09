@@ -16,10 +16,11 @@ class PlayerTest {
 
 
     @Test
-    void newPlayerStartsWithEmptyHand() {
+    void newPlayerStartsWithOneEmptyHand() {
 
         Player player = new Player("Herrick");
 
+        assertEquals(1, player.getHandCount());
         assertEquals(0, player.getHand().getCardCount());
     }
 
@@ -40,18 +41,33 @@ class PlayerTest {
 
 
     @Test
-    void resetHandCreatesEmptyHand() {
+    void playerCanHaveMultipleHands() {
+
+        Player player = new Player("Herrick");
+
+        Hand secondHand = new Hand();
+
+        player.addHand(secondHand);
+
+        assertEquals(2, player.getHandCount());
+    }
+
+
+    @Test
+    void resetHandReturnsPlayerToOneEmptyHand() {
 
         Player player = new Player("Herrick");
 
         player.addCard(
             new Card(Card.Suit.SPADES, Card.Rank.ACE));
 
-        assertEquals(1, player.getHand().getCardCount());
+        player.addHand(new Hand());
+
+        assertEquals(2, player.getHandCount());
 
         player.resetHand();
 
+        assertEquals(1, player.getHandCount());
         assertEquals(0, player.getHand().getCardCount());
     }
 }
-

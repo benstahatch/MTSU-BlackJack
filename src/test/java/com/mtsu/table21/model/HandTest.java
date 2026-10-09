@@ -121,5 +121,28 @@ class HandTest {
 
         assertFalse(hand.isBlackjack());
     }
-}
 
+
+    @Test
+    void cardCanBeRemovedFromHand() {
+
+        Hand hand = new Hand();
+
+        Card first =
+            new Card(Card.Suit.HEARTS, Card.Rank.EIGHT);
+
+        Card second =
+            new Card(Card.Suit.CLUBS, Card.Rank.EIGHT);
+
+
+        hand.addCard(first);
+        hand.addCard(second);
+
+
+        Card removed = hand.removeCard(1);
+
+
+        assertEquals(second, removed);
+        assertEquals(1, hand.getCardCount());
+    }
+}

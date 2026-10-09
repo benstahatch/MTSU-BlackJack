@@ -1,46 +1,84 @@
 package com.mtsu.table21.model;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class Player {
 
-    // Player's name
+    // Player name
     private final String name;
 
-    // Player's current blackjack hand
-    private Hand hand;
+    // Normally contains one hand.
+    // After a split, it can contain two hands.
+    private final ArrayList<Hand> hands;
 
 
     // Constructor
     public Player(String name) {
 
         this.name = name;
-        this.hand = new Hand();
+
+        hands = new ArrayList<>();
+
+        // Every player begins with one hand
+        hands.add(new Hand());
     }
 
 
-    // Return player's name
+    // Return player name
     public String getName() {
-
         return name;
     }
 
 
-    // Return player's current hand
+    // Return first/default hand
     public Hand getHand() {
-
-        return hand;
+        return hands.get(0);
     }
 
 
-    // Add a card to player's hand
+    // Return a specific hand
+    public Hand getHand(int index) {
+        return hands.get(index);
+    }
+
+
+    // Return all player hands
+    public List<Hand> getHands() {
+        return hands;
+    }
+
+
+    // Number of hands the player currently has
+    public int getHandCount() {
+        return hands.size();
+    }
+
+
+    // Add card to first hand
     public void addCard(Card card) {
-
-        hand.addCard(card);
+        hands.get(0).addCard(card);
     }
 
 
-    // Start a new round with an empty hand
+    // Add card to a specific hand
+    public void addCard(int handIndex, Card card) {
+        hands.get(handIndex).addCard(card);
+    }
+
+
+    // Add another hand after splitting
+    public void addHand(Hand hand) {
+        hands.add(hand);
+    }
+
+
+    // Reset player for a new round
     public void resetHand() {
 
-        hand = new Hand();
+        hands.clear();
+
+        // Begin new round with one empty hand
+        hands.add(new Hand());
     }
 }
