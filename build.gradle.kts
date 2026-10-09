@@ -40,3 +40,12 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+
+tasks.register<JavaExec>("runServer") {
+    group = "application"
+    description = "Runs the Table21 casino server"
+
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.mtsu.table21.server.CasinoServerKt")
+}
