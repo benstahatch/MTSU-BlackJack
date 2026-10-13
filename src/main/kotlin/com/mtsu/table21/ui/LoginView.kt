@@ -2,6 +2,7 @@ package com.mtsu.table21.ui
 
 import javafx.geometry.Insets
 import javafx.geometry.Pos
+import javafx.scene.Scene
 import javafx.scene.control.Button
 import javafx.scene.control.Label
 import javafx.scene.control.PasswordField
@@ -9,13 +10,14 @@ import javafx.scene.control.TextField
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import javafx.scene.text.Font
+import javafx.stage.Stage
 
 class LoginView {
 	//Creates a vertal propmt
-    fun getView(): VBox {
+    fun getView(stage: Stage): VBox {
 
         // Title
-        val title = Label("TABLE 21")
+        val title = Label("Casino Login")
         title.font = Font.font(32.0)
 
         // Username
@@ -34,6 +36,14 @@ class LoginView {
         val loginButton = Button("LOGIN")
         loginButton.prefWidth = 300.0
 
+        //Logout buttom
+        val quitButton = Button("QUIT")
+        quitButton.prefWidth = 300.0
+
+        //create user buttom
+        val createUserButton = Button("Create Account")
+        createUserButton.prefWidth = 300.0
+
         // Message shown after clicking login
         val message = Label()
 
@@ -50,7 +60,20 @@ class LoginView {
                 message.textFill = Color.GREEN
 
                 // Later, this is where we connect to the server.
+                val lobby=LobbyView()
+                val scene = Scene(lobby.getView(username, stage), 800.0, 600.0)
+                stage.scene = scene
             }
+        }
+
+        createUserButton.setOnAction {
+            val user=CreateUser()
+            val scene = Scene(user.getView(stage), 800.0, 600.0)
+            stage.scene = scene
+        }
+
+        quitButton.setOnAction {
+            javafx.application.Platform.exit()
         }
 
         // Put everything into the layout
@@ -62,6 +85,8 @@ class LoginView {
             passwordLabel,
             passwordField,
             loginButton,
+            createUserButton,
+            quitButton,
             message
         )
 
