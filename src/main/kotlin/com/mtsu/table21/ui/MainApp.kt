@@ -10,9 +10,9 @@ class MainApp : Application() {
 
     override fun start(stage: Stage) {
     	val login=LoginView()
-        val scene = Scene(login.getView(), 800.0, 600.0)
+        val scene = Scene(login.getView(stage), 800.0, 600.0)
  
-        stage.title = "Table21"
+        stage.title = "Welcome to the casino"
         stage.scene = scene 
         stage.show()
     }
