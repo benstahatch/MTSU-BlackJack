@@ -1,5 +1,6 @@
 package com.mtsu.table21.ui
 
+import com.mtsu.table21.client.CasinoClient
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.control.Button
@@ -12,7 +13,9 @@ import javafx.scene.control.PasswordField
 import javafx.scene.control.TextField
 import javafx.stage.Stage
 
-class CreateUser {
+class CreateUser(
+  private val CasinoClient: CasinoClient
+) {
     fun getView(stage: Stage): VBox {
         // Title
         val title = Label("Casino Login")
@@ -53,7 +56,7 @@ class CreateUser {
                 message.textFill = Color.GREEN
 
                 // Later, this is where we connect to the server.
-                val lobby=LobbyView()
+                val lobby=LobbyView(CasinoClient)
                 val scene = Scene(lobby.getView(username, stage), 800.0, 600.0)
                 stage.scene = scene
             }
