@@ -1,5 +1,6 @@
 package com.mtsu.table21.ui
 
+import com.mtsu.table21.client.CasinoClient
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.control.Button
@@ -13,7 +14,9 @@ import javafx.scene.text.Font
 import javafx.scene.Scene
 import javafx.stage.Stage
 
-class LobbyView() {
+class LobbyView(
+    private val casinoClient: CasinoClient
+) {
     fun getView(userName:String,stage: Stage): VBox {
         val table = Label("Welcome to the casino")
         val username = Label("Welcome, $userName")
@@ -42,6 +45,7 @@ class LobbyView() {
         tables.font = Font.font(24.0)
         tables.textFill = Color.WHITE
         tables.alignment = Pos.CENTER
+
         // Style the buttons
         val buttonStyle = """
         -fx-background-color: #E3C46B;
@@ -66,7 +70,14 @@ class LobbyView() {
 
         //logout button action
         logout.setOnAction{
-            val login=LoginView()
+
+            //disconnect current client from server
+            casinoClient.disconnect()
+
+            //create a new client for login
+            val newClient=CasinoClient()
+
+            val login=LoginView(newClient)
             val scene = Scene(login.getView(stage), 800.0, 600.0)
             stage.scene = scene
         }
@@ -93,9 +104,11 @@ class LobbyView() {
             bottom,
             bottomSpacer
         )
+
         layout.padding = Insets(25.0)
         layout.alignment = Pos.CENTER
         layout.style = "-fx-background-color: #123D2B;"
+
         return layout
     }
 }
