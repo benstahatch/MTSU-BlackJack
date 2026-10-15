@@ -48,6 +48,10 @@ class LoginView(
         val createUserButton = Button("Create Account")
         createUserButton.prefWidth = 300.0
 
+        //temp admin login
+        val adminButton = Button("ADMIN")
+        adminButton.prefWidth = 300.0
+
         // Message shown after clicking login
         val message = Label()
 
@@ -124,6 +128,12 @@ class LoginView(
             javafx.application.Platform.exit()
         }
 
+        adminButton.setOnAction {
+            val adminView=AdminView(casinoClient)
+            val scene = Scene(adminView.getView(stage), 800.0, 600.0)
+            stage.scene = scene
+        }
+
         // Put everything into the layout
         val layout = VBox(
             10.0,
@@ -134,6 +144,7 @@ class LoginView(
             passwordField,
             loginButton,
             createUserButton,
+            adminButton,
             quitButton,
             message
         )
