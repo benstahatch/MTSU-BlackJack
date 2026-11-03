@@ -90,7 +90,7 @@ class AdminView (private val casinoClient: CasinoClient){
         goldLine.style = "-fx-background-color: #F4D27A;"
 
         //wecome message
-        val welcome = Label("Welcome, admin ")
+        val welcome = Label("Welcome, Admin ")
         welcome.font = Font.font(15.0)
         welcome.textFill = Color.WHITE
 

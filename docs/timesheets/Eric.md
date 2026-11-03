@@ -16,3 +16,8 @@
 	I am waiting for others before implementing it. Also update
 	the login view to temporarily include the admin screen because
 	the database is not yet created.
+11/2 6:20
+	Created the blackjackTableView.kt which have the blackjack background
+	and have the card gain from the image. Does not include chips and 
+	animations. The payout is currently always 1 to 2 ratio. does
+	include split and double yet. Only have 1 player instead of 4.
