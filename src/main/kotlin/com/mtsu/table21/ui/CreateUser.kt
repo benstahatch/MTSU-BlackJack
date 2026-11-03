@@ -63,6 +63,7 @@ class CreateUser(
         }
 
         quitButton.setOnAction {
+            CasinoClient.disconnect()
             javafx.application.Platform.exit()
         }
         // Put everything into the layout

@@ -18,7 +18,7 @@ class LobbyView(
     private val casinoClient: CasinoClient
 ) {
     fun getView(userName:String,stage: Stage): VBox {
-        val table = Label("Welcome to the casino")
+        val table = Label("Welcome to Table21")
         val username = Label("Welcome, $userName")
         //need to link chips into player system
         val chips = Label("Chips: TBD")
