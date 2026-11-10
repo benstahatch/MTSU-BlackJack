@@ -21,3 +21,9 @@
 	and have the card gain from the image. Does not include chips and 
 	animations. The payout is currently always 1 to 2 ratio. does
 	include split and double yet. Only have 1 player instead of 4.
+11/9 7:48
+	Updated BlackjackTableView.kt to make the hidden dealer card the same 
+	size as the visible dealer cards. Added a player total label to display 
+	the value of the player's hand, including proper Ace calculations and
+	split-hand totals. Also change most of the .server folder to support 
+	multiplayer game play and add double down.

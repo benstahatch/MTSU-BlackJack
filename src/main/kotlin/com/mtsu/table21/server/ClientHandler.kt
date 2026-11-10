@@ -6,118 +6,61 @@ class ClientHandler(
     private val socket: Socket,
     private val tableSessionManager: TableSessionManager
 ) : Runnable {
-
     override fun run() {
-
-        // close the connection when this client is done
-        socket.use { client ->
-
-            // set up reading and writing for this client
-            val input = client.getInputStream().bufferedReader()
-            val output = client.getOutputStream().bufferedWriter()
-            val playerId = "player-${client.port}"
-
-            output.write("CONNECTED\n")
-            output.flush()
-
-            var running = true
-            var currentTableId: String? = null
-
-            while (running) {
-
-                // read one command at a time until the client disconnects
-                val rawMessage = input.readLine() ?: break
-
-                println("Received: $rawMessage")
-
-                // convert the incoming text into a network message
-                val message = try {
-                    NetworkMessage.valueOf(
-                        rawMessage.trim().uppercase()
-                    )
-                } catch (e: IllegalArgumentException) {
-                    null
-                }
-
-                when (message) {
-
-                    NetworkMessage.PING -> {
-                        output.write("PONG\n")
-                    }
-
-                    // add the player to the default table
-                    NetworkMessage.JOIN_TABLE -> {
-
-                        val tableId = "table-1"
-
-                        tableSessionManager.joinTable(
-                            tableId,
-                            playerId
-                        )
-
-                        currentTableId = tableId
-
-                        output.write("JOINED $tableId\n")
-                    }
-
-                    // remove the player from their current table
-                    NetworkMessage.LEAVE_TABLE -> {
-
-                        val tableId = currentTableId
-
-                        if (tableId != null) {
-
-                            tableSessionManager.leaveTable(
-                                tableId,
-                                playerId
-                            )
-
-                            currentTableId = null
-
-                            output.write("LEFT $tableId\n")
-
-                        } else {
-
-                            output.write("NOT IN A TABLE\n")
-                        }
-                    }
-
-                    // acknowledge game commands for now
-                    NetworkMessage.PLACE_BET -> {
-                        output.write("PLACE_BET RECEIVED\n")
-                    }
-
-                    NetworkMessage.HIT -> {
-                        output.write("HIT RECEIVED\n")
-                    }
-
-                    NetworkMessage.STAND -> {
-                        output.write("STAND RECEIVED\n")
-                    }
-
-                    NetworkMessage.DOUBLE_DOWN -> {
-                        output.write("DOUBLE_DOWN RECEIVED\n")
-                    }
-
-                    NetworkMessage.SPLIT -> {
-                        output.write("SPLIT RECEIVED\n")
-                    }
-
-                    // stop reading commands when the player quits
-                    NetworkMessage.QUIT -> {
-                        output.write("BYE\n")
-                        running = false
-                    }
-
-                    null -> {
-                        output.write("UNKNOWN COMMAND\n")
-                    }
-                }
-
-                // send the reply right away
+        var playerId: String? = null
+        val output = socket.getOutputStream().bufferedWriter(Charsets.UTF_8)
+        val writeLock = Any()
+        fun send(line: String) {
+            synchronized(writeLock) {
+                output.write(line)
+                output.newLine()
                 output.flush()
             }
-
+        }
+        try {
+            socket.tcpNoDelay = true
+            val input = socket.getInputStream().bufferedReader(Charsets.UTF_8)
+            send("CONNECTED")
+            while (!socket.isClosed) {
+                val raw = input.readLine() ?: break
+                val parts = raw.split('|', limit = 2)
+                val command = parts[0].trim().uppercase()
+                val argument = parts.getOrElse(1) { "" }
+                println("${socket.inetAddress.hostAddress}: $command")
+                when (command) {
+                    "PING" -> send("PONG")
+                    "JOIN_TABLE" -> {
+                        val username = try {
+                            String(java.util.Base64.getUrlDecoder().decode(argument), Charsets.UTF_8)
+                        } catch (_: Exception) { argument }
+                        val joined = tableSessionManager.joinTable(username, ::send)
+                        if (joined.startsWith("ERROR|")) send(joined) else playerId = joined
+                    }
+                    "LEAVE_TABLE" -> {
+                        playerId?.let { tableSessionManager.leaveTable(it) }
+                        playerId = null
+                        send("LEFT")
+                    }
+                    "QUIT" -> {
+                        playerId?.let { tableSessionManager.leaveTable(it) }
+                        send("BYE")
+                        break
+                    }
+                    else -> {
+                        val id = playerId
+                        if (id == null) send("ERROR|Join a table first")
+                        else {
+                            val response = tableSessionManager.handle(id, command, argument)
+                            if (response != null) send(response)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            println("Client handler ended: ${e.message}")
+        } finally {
+            playerId?.let { tableSessionManager.leaveTable(it) }
+            try { socket.close() } catch (_: Exception) { }
             println("Client disconnected.")
         }
     }

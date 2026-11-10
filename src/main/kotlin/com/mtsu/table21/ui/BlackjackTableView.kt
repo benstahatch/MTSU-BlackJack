@@ -1,12 +1,9 @@
 package com.mtsu.table21.ui
 
-import com.mtsu.table21.game.BlackjackRules
-import com.mtsu.table21.game.BlackjackTable
-import com.mtsu.table21.game.GameRound
-import com.mtsu.table21.model.Bet
+import com.mtsu.table21.client.CasinoClient
 import com.mtsu.table21.model.Card
-import com.mtsu.table21.model.Hand
-import com.mtsu.table21.model.Wallet
+import javafx.application.Platform
+import javafx.geometry.NodeOrientation
 import javafx.geometry.Pos
 import javafx.scene.control.Button
 import javafx.scene.control.Label
@@ -19,480 +16,311 @@ import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
 import javafx.scene.text.Font
 import javafx.scene.text.FontWeight
+import java.util.Base64
 
 class BlackjackTableView(
-    private val blackjackTable: BlackjackTable,
-    private val wallet: Wallet,
+    private val casinoClient: CasinoClient,
+    private val userName: String,
     private val onQuit: () -> Unit
 ) : StackPane() {
+    private data class PlayerSnapshot(
+        val id: String, val seat: Int, val name: String, val balance: Double,
+        val optedIn: Boolean, val bet: Double, val result: String,
+        val handIndex: Int, val hands: List<List<Card>>
+    )
+
+    private var myPlayerId: String? = null
+    private var mySeat: Int = -1
+    private var phase = "WAITING"
+    private var currentPlayerId = "-"
+    private var dealerHidden = true
+    private var dealerCardsState: List<Card> = emptyList()
+    private var playerState: List<PlayerSnapshot> = emptyList()
 
     private val tablePane = Pane()
-
-    private val dealerCards = HBox(6.0)
-    private val playerCards = HBox(5.0)
-
+    private val dealerCards = HBox(5.0)
     private val dealerTotal = Label("")
-    private val playerName = Label(blackjackTable.player.name)
-    private val playerTotal = Label("")
-
-    private val walletLabel = Label()
-    private val betLabel = Label("Bet: $0.00")
-    private val statusLabel = Label("Enter a bet, then press Deal.")
-
+    private val playerNames = List(4) { Label("Seat ${it + 1} — Empty") }
+    private val playerCards = List(4) { HBox(3.0) }
+    private val playerInfo = List(4) { Label("") }
+    private val statusLabel = Label("Joining table...")
     private val betInput = TextField("10")
+
+    private val optInButton = Button("Play This Round")
+    private val sitOutButton = Button("Sit Out")
+    private val betButton = Button("Set Bet")
     private val dealButton = Button("Deal")
     private val hitButton = Button("Hit")
     private val standButton = Button("Stand")
-    private val resetButton = Button("Reset")
+    private val splitButton = Button("Split")
+    private val doubleButton = Button("Double")
     private val quitButton = Button("Quit")
 
-    private var currentBet: Bet? = null
-    private var showRound = false
-    private var payoutApplied = false
-
     init {
-        prefWidth = 800.0
-        prefHeight = 600.0
-        minWidth = 800.0
-        minHeight = 600.0
-        maxWidth = 800.0
-        maxHeight = 600.0
-
+        prefWidth = 800.0; prefHeight = 600.0
+        minWidth = 800.0; minHeight = 600.0
+        maxWidth = 800.0; maxHeight = 600.0
         createBackground()
         createTableOverlay()
         setupButtons()
+        casinoClient.setMessageListener { line -> Platform.runLater { handleServerMessage(line) } }
         updateView()
     }
 
     private fun createBackground() {
         val resource = javaClass.getResource("/images/BackGround blackjack/blackjack_table.png")
-            ?: throw IllegalStateException(
-                "Missing /images/blackjack_table.png. " +
-                        "Place the PNG in src/main/resources/images/"
-            )
-
+            ?: throw IllegalStateException("Missing blackjack_table.png in resources.")
         val background = ImageView(Image(resource.toExternalForm())).apply {
-            fitWidth = 800.0
-            fitHeight = 600.0
-            isPreserveRatio = false
-            isMouseTransparent = true
+            fitWidth = 800.0; fitHeight = 600.0; isPreserveRatio = false; isMouseTransparent = true
         }
-
-        children.add(background)
-        children.add(tablePane)
+        children.addAll(background, tablePane)
     }
 
     private fun createTableOverlay() {
-        // Dealer cards fit inside the two card outlines in the background PNG.
-        dealerCards.alignment = Pos.CENTER
-        dealerCards.layoutX = 330.0
-        dealerCards.layoutY = 48.0
-        dealerCards.prefWidth = 140.0
-        dealerCards.prefHeight = 90.0
+        dealerCards.apply { alignment = Pos.CENTER; layoutX = 320.0; layoutY = 45.0; prefWidth = 160.0; prefHeight = 75.0 }
         tablePane.children.add(dealerCards)
+        dealerTotal.apply { font = Font.font("Georgia", FontWeight.BOLD, 14.0); textFill = GOLD }
+        place(dealerTotal, 325.0, 125.0, 160.0); tablePane.children.add(dealerTotal)
 
-        dealerTotal.apply {
-            font = Font.font("Georgia", FontWeight.BOLD, 15.0)
-            textFill = GOLD
+        val positions = listOf(35.0 to 180.0, 425.0 to 180.0, 35.0 to 350.0, 425.0 to 350.0)
+        for (i in 0..3) {
+            val (x, y) = positions[i]
+            playerNames[i].apply { font = Font.font("Georgia", FontWeight.BOLD, 14.0); textFill = GOLD }
+            place(playerNames[i], x, y, 160.0); tablePane.children.add(playerNames[i])
+            playerCards[i].apply { alignment = Pos.CENTER_LEFT; layoutX = x; layoutY = y + 25.0; prefWidth = 340.0; prefHeight = 65.0 }
+            tablePane.children.add(playerCards[i])
+            playerInfo[i].apply { font = Font.font("Arial", FontWeight.BOLD, 11.0); textFill = Color.WHITE }
+            place(playerInfo[i], x, y + 95.0, 340.0); tablePane.children.add(playerInfo[i])
         }
-        place(dealerTotal, 340.0, 140.0)
-        tablePane.children.add(dealerTotal)
-
-        // This version of the backend has one Player per BlackjackTable.
-        // The local player is displayed at seat 1 (left side of the image).
-        playerName.apply {
-            font = Font.font("Georgia", FontWeight.BOLD, 14.0)
-            textFill = GOLD
-        }
-        place(playerName, 48.0, 222.0, 135.0)
-        tablePane.children.add(playerName)
-
-        playerCards.alignment = Pos.CENTER
-        playerCards.layoutX = 42.0
-        playerCards.layoutY = 244.0
-        playerCards.prefWidth = 145.0
-        playerCards.prefHeight = 68.0
-        tablePane.children.add(playerCards)
-
-        betLabel.apply {
-            font = Font.font("Georgia", FontWeight.BOLD, 13.0)
-            textFill = GOLD
-        }
-        place(betLabel, 72.0, 365.0, 100.0)
-        tablePane.children.add(betLabel)
-
-        playerTotal.apply {
-            font = Font.font("Arial", FontWeight.BOLD, 12.0)
-            textFill = Color.WHITE
-        }
-        place(playerTotal, 65.0, 385.0, 115.0)
-        tablePane.children.add(playerTotal)
-
-        walletLabel.apply {
-            font = Font.font("Arial", FontWeight.BOLD, 14.0)
-            textFill = GOLD
-        }
-        place(walletLabel, 30.0, 488.0, 190.0)
-        tablePane.children.add(walletLabel)
-
         statusLabel.apply {
-            font = Font.font("Arial", FontWeight.BOLD, 13.0)
-            textFill = Color.WHITE
-            alignment = Pos.CENTER
-            prefWidth = 340.0
-            maxWidth = 340.0
+            font = Font.font("Arial", FontWeight.BOLD, 12.0); textFill = Color.WHITE
+            alignment = Pos.CENTER; prefWidth = 430.0; maxWidth = 430.0; isWrapText = true
         }
-        place(statusLabel, 230.0, 485.0, 340.0)
-        tablePane.children.add(statusLabel)
-
-        val betPrompt = Label("Bet amount:")
-        betPrompt.apply {
-            font = Font.font("Arial", FontWeight.BOLD, 12.0)
-            textFill = GOLD
-        }
-        place(betPrompt, 640.0, 468.0, 100.0)
-        tablePane.children.add(betPrompt)
-
+        place(statusLabel, 185.0, 465.0, 430.0, 35.0); tablePane.children.add(statusLabel)
+        val betPrompt = Label("Your bet:").apply { font = Font.font("Arial", FontWeight.BOLD, 12.0); textFill = GOLD }
+        place(betPrompt, 650.0, 450.0, 100.0); tablePane.children.add(betPrompt)
         betInput.apply {
-            prefWidth = 100.0
-            maxWidth = 100.0
-            prefHeight = 27.0
-            style = """
-                -fx-background-color: #F5F0DF;
-                -fx-text-fill: #153D2E;
-                -fx-font-weight: bold;
-                -fx-background-radius: 5;
-            """.trimIndent()
+            prefWidth = 95.0; prefHeight = 27.0
+            style = "-fx-background-color: #F5F0DF; -fx-text-fill: #153D2E; -fx-font-weight: bold; -fx-background-radius: 5;"
         }
-        place(betInput, 640.0, 490.0, 100.0)
-        tablePane.children.add(betInput)
+        place(betInput, 650.0, 475.0, 95.0); tablePane.children.add(betInput)
 
-        styleButton(dealButton, "#D9B84F", "#153D2E")
-        styleButton(hitButton, "#174D35", "#FFFFFF")
-        styleButton(standButton, "#174D35", "#FFFFFF")
-        styleButton(resetButton, "#174D35", "#FFFFFF")
-        styleButton(quitButton, "#8B2525", "#FFFFFF")
-
-        place(dealButton, 180.0, 535.0, 95.0, 38.0)
-        place(hitButton, 285.0, 535.0, 85.0, 38.0)
-        place(standButton, 380.0, 535.0, 95.0, 38.0)
-        place(resetButton, 485.0, 535.0, 95.0, 38.0)
-        place(quitButton, 680.0, 535.0, 80.0, 38.0)
-
-        tablePane.children.addAll(
-            dealButton,
-            hitButton,
-            standButton,
-            resetButton,
-            quitButton
+        listOf(optInButton, sitOutButton, betButton, dealButton, hitButton, standButton, splitButton, doubleButton, quitButton)
+            .forEach { styleButton(it) }
+        val buttonPositions = listOf(
+            optInButton to (15.0 to 535.0), sitOutButton to (125.0 to 535.0),
+            betButton to (215.0 to 535.0), dealButton to (300.0 to 535.0),
+            hitButton to (385.0 to 535.0), standButton to (445.0 to 535.0),
+            splitButton to (510.0 to 535.0), doubleButton to (575.0 to 535.0),
+            quitButton to (690.0 to 535.0)
         )
-    }
-
-    private fun place(
-        node: javafx.scene.Node,
-        x: Double,
-        y: Double,
-        width: Double? = null,
-        height: Double? = null
-    ) {
-        node.layoutX = x
-        node.layoutY = y
-
-        if (width != null && node is javafx.scene.layout.Region) {
-            node.prefWidth = width
-            node.minWidth = width
-        }
-        if (height != null && node is javafx.scene.layout.Region) {
-            node.prefHeight = height
-            node.minHeight = height
+        buttonPositions.forEach { (button, pos) ->
+            val width = when (button) {
+                optInButton -> 105.0; sitOutButton -> 82.0; betButton -> 78.0
+                dealButton -> 75.0; hitButton -> 55.0; standButton -> 60.0
+                splitButton -> 60.0; doubleButton -> 90.0; else -> 70.0
+            }
+            place(button, pos.first, pos.second, width, 38.0)
+            tablePane.children.add(button)
         }
     }
 
-    private fun styleButton(button: Button, background: String, foreground: String) {
+    private fun place(node: javafx.scene.Node, x: Double, y: Double, width: Double? = null, height: Double? = null) {
+        node.layoutX = x; node.layoutY = y
+        if (width != null && node is javafx.scene.layout.Region) { node.prefWidth = width; node.minWidth = width }
+        if (height != null && node is javafx.scene.layout.Region) { node.prefHeight = height; node.minHeight = height }
+    }
+
+    private fun styleButton(button: Button) {
         button.apply {
-            prefHeight = 38.0
-            minHeight = 38.0
-            font = Font.font("Arial", FontWeight.BOLD, 13.0)
-            style = """
-                -fx-background-color: $background;
-                -fx-text-fill: $foreground;
-                -fx-border-color: #E7C65A;
-                -fx-border-width: 1.5;
-                -fx-background-radius: 7;
-                -fx-border-radius: 7;
-                -fx-cursor: hand;
-            """.trimIndent()
+            prefHeight = 38.0; minHeight = 38.0
+            font = Font.font("Arial", FontWeight.BOLD, 10.0)
+            style = "-fx-background-color: #174D35; -fx-text-fill: white; -fx-border-color: #E7C65A; -fx-border-width: 1.5; -fx-background-radius: 7; -fx-border-radius: 7; -fx-cursor: hand;"
         }
     }
 
     private fun setupButtons() {
-        dealButton.setOnAction {
-            startRoundWithBet()
+        optInButton.setOnAction { send("OPT_IN") }
+        sitOutButton.setOnAction { send("SIT_OUT") }
+        betButton.setOnAction {
+            val amount = betInput.text.trim().toDoubleOrNull()
+            if (amount == null || !amount.isFinite() || amount <= 0.0) statusLabel.text = "Enter a valid bet greater than zero."
+            else send("PLACE_BET|$amount")
         }
-
-        hitButton.setOnAction {
-            try {
-                blackjackTable.currentRound.hit()
-                updateView()
-            } catch (e: IllegalStateException) {
-                statusLabel.text = e.message ?: "You cannot hit right now."
-            }
-        }
-
-        standButton.setOnAction {
-            try {
-                blackjackTable.currentRound.stand()
-                updateView()
-            } catch (e: IllegalStateException) {
-                statusLabel.text = e.message ?: "You cannot stand right now."
-            }
-        }
-
-        resetButton.setOnAction {
-            if (blackjackTable.hasActiveRound()) {
-                statusLabel.text = "Finish the current round before resetting."
-            } else {
-                showRound = false
-                currentBet = null
-                payoutApplied = false
-                dealerCards.children.clear()
-                playerCards.children.clear()
-                dealerTotal.text = ""
-                playerTotal.text = ""
-                betLabel.text = "Bet: $0.00"
-                statusLabel.text = "Ready for a new round. Enter a bet and press Deal."
-                updateView()
-            }
-        }
+        dealButton.setOnAction { send("START_ROUND") }
+        hitButton.setOnAction { send("HIT") }
+        standButton.setOnAction { send("STAND") }
+        splitButton.setOnAction { send("SPLIT") }
+        doubleButton.setOnAction { send("DOUBLE_DOWN") }
         quitButton.setOnAction {
+            send("LEAVE_TABLE")
+            casinoClient.setMessageListener(null)
             onQuit()
         }
     }
 
-    private fun startRoundWithBet() {
-        if (blackjackTable.hasActiveRound()) {
-            statusLabel.text = "The current round is still in progress."
-            return
-        }
+    private fun send(command: String) {
+        val result = casinoClient.sendCommand(command)
+        if (result != "SENT") statusLabel.text = result
+    }
 
-        val amount = betInput.text.trim().toDoubleOrNull()
-        if (amount == null || !amount.isFinite() || amount <= 0.0) {
-            statusLabel.text = "Enter a valid bet greater than zero."
-            return
-        }
-
-        if (!wallet.canAfford(amount)) {
-            statusLabel.text = "You do not have enough chips for that bet."
-            return
-        }
-
-        val newBet = try {
-            Bet(amount)
-        } catch (e: IllegalArgumentException) {
-            statusLabel.text = e.message ?: "Invalid bet."
-            return
-        }
-
-        // Take the wager before starting the round.
-        wallet.removeChips(amount)
-
-        try {
-            blackjackTable.startNewRound()
-            currentBet = newBet
-            payoutApplied = false
-            showRound = true
-            statusLabel.text = "Your turn."
-            updateView()
-        } catch (e: RuntimeException) {
-            // Return the wager if the game could not start.
-            wallet.addChips(amount)
-            currentBet = null
-            statusLabel.text = e.message ?: "Could not start the round."
-            updateView()
+    private fun handleServerMessage(line: String) {
+        when {
+            line == "DISCONNECTED" -> statusLabel.text = "Disconnected from server."
+            line.startsWith("JOINED|") -> {
+                val parts = line.split('|')
+                myPlayerId = parts.getOrNull(1)
+                mySeat = parts.getOrNull(2)?.toIntOrNull() ?: -1
+                statusLabel.text = "Joined Table #1. You are Player ${mySeat + 1}. Choose Play This Round and set your bet."
+            }
+            line.startsWith("ERROR|") -> statusLabel.text = line.substringAfter('|')
+            line.startsWith("OK|") -> statusLabel.text = line.substringAfter('|')
+            line.startsWith("STATE|") -> parseState(line)
+            line == "LEFT" -> statusLabel.text = "You left the table."
         }
     }
 
-    fun updateView() {
-        walletLabel.text = "Chips: ${formatChips(wallet.balance)}"
-
-        val round = blackjackTable.currentRound
-
-        if (!showRound || round == null) {
-            hitButton.isDisable = true
-            standButton.isDisable = true
-            dealButton.isDisable = blackjackTable.hasActiveRound()
-            return
+    private fun parseState(line: String) {
+        val parts = line.split('|', limit = 7)
+        if (parts.size < 7) return
+        phase = parts[2]
+        dealerCardsState = parseCards(parts[3])
+        dealerHidden = parts[4].toBoolean()
+        currentPlayerId = parts[5]
+        playerState = if (parts[6].isBlank()) emptyList() else parts[6].split(',').mapNotNull { encoded ->
+            try {
+                val fields = String(Base64.getUrlDecoder().decode(encoded), Charsets.UTF_8).split('~', limit = 10)
+                if (fields.size < 10) return@mapNotNull null
+                val hands = if (fields[9].isBlank()) emptyList() else fields[9].split(';').map { parseCards(it) }
+                PlayerSnapshot(fields[0], fields[1].toInt(), decode(fields[2]), fields[3].toDouble(),
+                    fields[4].toBoolean(), fields[5].toDouble(), fields[6], fields[7].toInt(), hands)
+            } catch (_: Exception) { null }
         }
+        updateView()
+    }
 
-        val player = blackjackTable.player
-        playerName.text = player.name
-        betLabel.text = "Bet: ${formatChips(currentBet?.amount ?: 0.0)}"
+    private fun decode(value: String) = String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8)
 
-        updatePlayerCards(player.hand)
-        updateDealerCards(round)
-
-        val isPlayerTurn = round.state == GameRound.State.PLAYER_TURN
-        hitButton.isDisable = !isPlayerTurn
-        standButton.isDisable = !isPlayerTurn
-        dealButton.isDisable = !round.isFinished()
-        resetButton.isDisable = round.isFinished().not()
-
-        if (round.isFinished()) {
-            settleBet(round)
-
-            val result = round.getResult()
-            val resultText = when (result) {
-                BlackjackRules.Result.PLAYER_WIN -> "You win!"
-                BlackjackRules.Result.DEALER_WIN -> "Dealer wins."
-                BlackjackRules.Result.PUSH -> "Push — your bet was returned."
-                else -> "Round finished."
-            }
-
-            statusLabel.text = resultText
-            dealerTotal.text = "Dealer total: ${round.dealer.hand.value}"
-            walletLabel.text = "Chips: ${formatChips(wallet.balance)}"
-        } else {
-            statusLabel.text = "Your turn."
-            dealerTotal.text = ""
+    private fun parseCards(value: String): List<Card> {
+        if (value.isBlank()) return emptyList()
+        return value.split(',').mapNotNull { token ->
+            val pair = token.split(':')
+            if (pair.size != 2) null else try {
+                Card(Card.Suit.valueOf(pair[1]), Card.Rank.valueOf(pair[0]))
+            } catch (_: Exception) { null }
         }
     }
 
-    private fun settleBet(round: GameRound) {
-        if (payoutApplied) return
-
-        val amount = currentBet?.amount ?: return
-
-        when (round.getResult()) {
-            BlackjackRules.Result.PLAYER_WIN -> {
-                // Return the original stake plus an equal amount in winnings.
-                wallet.addChips(amount * 2.0)
-            }
-            BlackjackRules.Result.PUSH -> {
-                // Return the original stake on a tie.
-                wallet.addChips(amount)
-            }
-            BlackjackRules.Result.DEALER_WIN -> {
-                // The wager was already removed, so no further change is needed.
-            }
-            else -> return
-        }
-
-        payoutApplied = true
-    }
-
-    private fun updatePlayerCards(hand: Hand) {
-        playerCards.children.clear()
-
-        for (index in 0 until hand.cardCount) {
-            playerCards.children.add(createCard(hand.getCard(index)))
-        }
-
-        playerTotal.text = "Total: ${hand.value}"
-    }
-
-    private fun updateDealerCards(round: GameRound) {
+    private fun updateView() {
         dealerCards.children.clear()
-
-        val hand = round.dealer.hand
-        val revealAll = round.isFinished()
-
-        for (index in 0 until hand.cardCount) {
-            val cardNode = if (index == 1 && !revealAll) {
-                createHiddenCard()
-            } else {
-                createCard(hand.getCard(index))
-            }
-            dealerCards.children.add(cardNode)
+        dealerCardsState.forEachIndexed { index, card ->
+            val hidden = dealerHidden && phase == "PLAYERS" && index == 1
+            dealerCards.children.add(if (hidden) createSmallHiddenCard() else createSmallCard(card))
         }
+        dealerTotal.text = if (!dealerHidden || phase == "FINISHED") {
+            "Dealer: ${dealerCardsState.sumOf { it.value }}"
+        } else "Dealer"
+
+        for (seat in 0..3) {
+            val p = playerState.firstOrNull { it.seat == seat }
+            playerNames[seat].text = p?.name ?: "Seat ${seat + 1} — Empty"
+            playerCards[seat].children.clear()
+            playerCards[seat].nodeOrientation = if (seat == 1 || seat == 3) NodeOrientation.RIGHT_TO_LEFT else NodeOrientation.LEFT_TO_RIGHT
+            playerCards[seat].alignment = if (seat == 1 || seat == 3) Pos.CENTER_RIGHT else Pos.CENTER_LEFT
+            playerNames[seat].alignment = if (seat == 1 || seat == 3) Pos.CENTER_RIGHT else Pos.CENTER_LEFT
+            if (p != null) {
+                p.hands.forEachIndexed { handIndex, cards ->
+                    if (handIndex > 0) playerCards[seat].children.add(Label(" | ").apply { textFill = GOLD })
+                    cards.forEach { playerCards[seat].children.add(createSmallCard(it)) }
+                }
+                val totals = p.hands.map { cards -> handTotal(cards) }
+                val totalText = if (totals.size > 1) "Totals: ${totals.joinToString(" / ")}" else "Total: ${totals.firstOrNull() ?: 0}"
+                playerInfo[seat].text = "$totalText   Bet: ${money(p.bet)}   Chips: ${money(p.balance)}   ${p.result}"
+            } else playerInfo[seat].text = ""
+        }
+
+        val mine = playerState.firstOrNull { it.id == myPlayerId }
+        val myTurn = mine != null && currentPlayerId == myPlayerId && phase == "PLAYERS"
+        val betweenRounds = phase == "WAITING" || phase == "FINISHED"
+        optInButton.isDisable = !betweenRounds || mine?.optedIn == true
+        sitOutButton.isDisable = !betweenRounds || mine == null || !mine.optedIn
+        betButton.isDisable = !betweenRounds || mine == null || mine.optedIn.not()
+        betInput.isDisable = !betweenRounds || mine == null || mine.optedIn.not()
+        dealButton.isDisable = !betweenRounds || mine == null
+        hitButton.isDisable = !myTurn
+        standButton.isDisable = !myTurn
+        val currentHand = mine?.hands?.getOrNull(mine.handIndex)
+        splitButton.isDisable = !myTurn || (currentHand?.let { it.size != 2 || it[0].rank != it[1].rank } ?: true)
+        doubleButton.isDisable = !myTurn || currentHand?.size != 2
+
+        if (phase == "PLAYERS") {
+            val active = playerState.firstOrNull { it.id == currentPlayerId }
+            statusLabel.text = if (myTurn) "Your turn — Player ${mySeat + 1}" else "${active?.name ?: "Waiting"}'s turn"
+        } else if (phase == "DEALER") statusLabel.text = "Dealer's turn"
+        else if (phase == "FINISHED") statusLabel.text = "Round finished. Choose Play This Round to join the next round."
+        else if (mine != null) statusLabel.text = "Choose Play This Round, then set your bet."
+    }
+
+    private fun createSmallCard(card: Card): StackPane = createCard(card).apply {
+        children.filterIsInstance<ImageView>().forEach { it.fitWidth = 40.0; it.fitHeight = 58.0 }
+        prefWidth = 40.0; minWidth = 40.0; prefHeight = 58.0; minHeight = 58.0
     }
 
     private fun createCard(card: Card): StackPane {
-
-        // Convert the card rank into a number.
-        val rankNumber = when (card.rank.name) {
-            "ACE" -> 1
-            "TWO" -> 2
-            "THREE" -> 3
-            "FOUR" -> 4
-            "FIVE" -> 5
-            "SIX" -> 6
-            "SEVEN" -> 7
-            "EIGHT" -> 8
-            "NINE" -> 9
-            "TEN" -> 10
-            "JACK" -> 11
-            "QUEEN" -> 12
-            "KING" -> 13
-            else -> throw IllegalArgumentException(
-                "Unknown card rank: ${card.rank.name}"
-            )
+        val rankNumber = when (card.rank) {
+            Card.Rank.ACE -> 1; Card.Rank.TWO -> 2; Card.Rank.THREE -> 3; Card.Rank.FOUR -> 4
+            Card.Rank.FIVE -> 5; Card.Rank.SIX -> 6; Card.Rank.SEVEN -> 7; Card.Rank.EIGHT -> 8
+            Card.Rank.NINE -> 9; Card.Rank.TEN -> 10; Card.Rank.JACK -> 11; Card.Rank.QUEEN -> 12; Card.Rank.KING -> 13
         }
-
-        // Determine the starting number for each suit.
-        val suitOffset = when (card.suit.name) {
-            "SPADES" -> 0
-            "HEARTS" -> 13
-            "DIAMONDS" -> 26
-            "CLUBS" -> 39
-            else -> throw IllegalArgumentException(
-                "Unknown card suit: ${card.suit.name}"
-            )
+        val suitOffset = when (card.suit) {
+            Card.Suit.SPADES -> 0; Card.Suit.HEARTS -> 13; Card.Suit.DIAMONDS -> 26; Card.Suit.CLUBS -> 39
         }
+        val fileName = "${suitOffset + rankNumber}.png"
+        val resource = javaClass.getResource("/images/cards/$fileName") ?: throw IllegalStateException("Missing card image: $fileName")
+        val imageView = ImageView(Image(resource.toExternalForm())).apply {
+            fitWidth = 58.0; fitHeight = 84.0; isPreserveRatio = false; isSmooth = true
+        }
+        return StackPane(imageView).apply { prefWidth = 58.0; minWidth = 58.0; prefHeight = 84.0; minHeight = 84.0 }
+    }
 
-        // Calculate the PNG filename.
-        val cardNumber = suitOffset + rankNumber
-        val fileName = "$cardNumber.png"
-
-        // Load the card image.
-        val resource = javaClass.getResource(
-            "/images/cards/$fileName"
-        ) ?: throw IllegalStateException(
-            "Missing card image: $fileName"
-        )
-
-        val imageView = ImageView(
-            Image(resource.toExternalForm())
-        ).apply {
-            fitWidth = 58.0
-            fitHeight = 84.0
+    private fun createSmallHiddenCard(): StackPane {
+        val resource = javaClass.getResource("/images/cards/b1fv.png")
+            ?: throw IllegalStateException("Missing b1fv.png")
+        val imageView = ImageView(Image(resource.toExternalForm())).apply {
+            fitWidth = 40.0
+            fitHeight = 58.0
             isPreserveRatio = false
             isSmooth = true
         }
-
         return StackPane(imageView).apply {
-            prefWidth = 58.0
-            minWidth = 58.0
-            prefHeight = 84.0
-            minHeight = 84.0
+            prefWidth = 40.0
+            minWidth = 40.0
+            prefHeight = 58.0
+            minHeight = 58.0
         }
     }
 
-    private fun createHiddenCard(): StackPane {
-        val resource = javaClass.getResource("/images/cards/b1fv.png")
-            ?: throw IllegalStateException("Missing b1fv.png")
-
-        val imageView = ImageView(Image(resource.toExternalForm())).apply {
-            fitWidth = 58.0
-            fitHeight = 84.0
-            isPreserveRatio = false
+    // Calculates a blackjack hand total, counting Aces as 11 when possible
+    // and reducing them to 1 when the hand would otherwise bust.
+    private fun handTotal(cards: List<Card>): Int {
+        var total = 0
+        var aces = 0
+        for (card in cards) {
+            if (card.rank == Card.Rank.ACE) {
+                total += 11
+                aces++
+            } else {
+                total += card.value
+            }
         }
-
-        return StackPane(imageView).apply {
-            prefWidth = 58.0
-            minWidth = 58.0
-            prefHeight = 84.0
-            minHeight = 84.0
+        while (total > 21 && aces > 0) {
+            total -= 10
+            aces--
         }
+        return total
     }
 
-    fun setStatus(message: String) {
-        statusLabel.text = message
-    }
+    private fun money(amount: Double) = "$" + String.format("%.2f", amount)
 
-    private fun formatChips(amount: Double): String =
-        String.format("$%.2f", amount)
-
-    companion object {
-        private val GOLD = Color.web("#E7C65A")
-    }
+    companion object { private val GOLD = Color.web("#E7C65A") }
 }

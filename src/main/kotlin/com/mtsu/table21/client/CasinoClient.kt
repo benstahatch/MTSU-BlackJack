@@ -1,70 +1,93 @@
 package com.mtsu.table21.client
 
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
 
+/** TCP client. One background thread reads server broadcasts; UI code never blocks waiting for a reply. */
 class CasinoClient(
-    private val host: String = "127.0.0.1",
+    private val host: String = "10.1.132.232",
     private val port: Int = 5555
 ) {
+    @Volatile private var socket: Socket? = null
+    @Volatile private var input: BufferedReader? = null
+    @Volatile private var output: BufferedWriter? = null
+    @Volatile private var listener: ((String) -> Unit)? = null
+    private val connected = AtomicBoolean(false)
+    private val writeLock = Any()
 
-    private var socket: Socket? = null
+    fun setMessageListener(callback: ((String) -> Unit)?) {
+        listener = callback
+    }
 
-    private var input: java.io.BufferedReader? = null
-    private var output: java.io.BufferedWriter? = null
-
-
+    @Synchronized
     fun connect(): Boolean {
-
-        if (socket?.isConnected == true) {
-            return true
-        }
-
+        if (connected.get() && socket?.isClosed == false) return true
         return try {
-
-            socket = Socket(host, port)
-
-            input =
-                socket!!
-                    .getInputStream()
-                    .bufferedReader()
-
-            output =
-                socket!!
-                    .getOutputStream()
-                    .bufferedWriter()
-
-            // Server sends CONNECTED immediately
-            val response = input!!.readLine()
-
-            response == "CONNECTED"
-
-        } catch (e: Exception) {
-
+            val newSocket = Socket()
+            newSocket.connect(InetSocketAddress(host, port), 4000)
+            newSocket.tcpNoDelay = true
+            val newInput = newSocket.getInputStream().bufferedReader(Charsets.UTF_8)
+            val newOutput = newSocket.getOutputStream().bufferedWriter(Charsets.UTF_8)
+            val greeting = newInput.readLine()
+            if (greeting != "CONNECTED") {
+                newSocket.close()
+                false
+            } else {
+                socket = newSocket
+                input = newInput
+                output = newOutput
+                connected.set(true)
+                Thread({ readLoop(newInput) }, "Table21-client-reader").apply {
+                    isDaemon = true
+                    start()
+                }
+                true
+            }
+        } catch (_: Exception) {
+            disconnect()
             false
         }
     }
 
-
-    fun sendCommand(command: String): String {
-
-        val writer =
-            output ?: return "NOT CONNECTED"
-
-        val reader =
-            input ?: return "NOT CONNECTED"
-
-        writer.write("$command\n")
-        writer.flush()
-
-        return reader.readLine()
-            ?: "NO RESPONSE"
+    private fun readLoop(reader: BufferedReader) {
+        try {
+            while (connected.get()) {
+                val line = reader.readLine() ?: break
+                listener?.invoke(line)
+            }
+        } catch (_: Exception) {
+            // A closed socket ends the reader loop.
+        } finally {
+            connected.set(false)
+            listener?.invoke("DISCONNECTED")
+        }
     }
 
+    /** Sends one protocol line. Replies and state changes arrive through setMessageListener. */
+    fun sendCommand(command: String): String {
+        val writer = output ?: return "NOT CONNECTED"
+        if (!connected.get()) return "NOT CONNECTED"
+        return try {
+            synchronized(writeLock) {
+                writer.write(command.replace("\n", "").replace("\r", ""))
+                writer.newLine()
+                writer.flush()
+            }
+            "SENT"
+        } catch (e: Exception) {
+            "SEND FAILED: ${e.message ?: "connection error"}"
+        }
+    }
 
+    fun isConnected(): Boolean = connected.get() && socket?.isClosed == false
+
+    @Synchronized
     fun disconnect() {
-
-        socket?.close()
-
+        connected.set(false)
+        try { socket?.close() } catch (_: Exception) { }
         socket = null
         input = null
         output = null
