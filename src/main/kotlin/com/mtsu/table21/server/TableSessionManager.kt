@@ -87,7 +87,7 @@ class TableSessionManager {
     }
 
     @Synchronized
-    fun handle(playerId: String, command: String, argument: String = ""): String? {
+    fun handle(playerId: String, command: String, argument: String = ""): String {
         val p = findPlayer(playerId) ?: return "ERROR|Join a table first"
         return try {
             when (command) {
@@ -167,7 +167,7 @@ class TableSessionManager {
             dealer.addCard(drawCard())
         }
         active.forEach { p ->
-            if (p.player.getHand().isBlackjack) p.doneHands.add(0)
+            if (p.player.hand.isBlackjack) p.doneHands.add(0)
         }
         if (dealer.hand.isBlackjack || active.all { it.doneHands.contains(0) }) {
             playDealerAndSettle()
