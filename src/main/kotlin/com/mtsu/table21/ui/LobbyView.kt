@@ -1,6 +1,8 @@
 package com.mtsu.table21.ui
 
 import com.mtsu.table21.client.CasinoClient
+import com.mtsu.table21.game.BlackjackTable
+import com.mtsu.table21.model.Wallet
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.control.Button
@@ -21,7 +23,7 @@ class LobbyView(
         val table = Label("Welcome to Table21")
         val username = Label("Welcome, $userName")
         //need to link chips into player system
-        val chips = Label("Chips: TBD")
+        val chips = Label("Chips: 1000")
         val tables = Label("Available Tables")
         val joinTables = Button("Join Tables")
         val createTables = Button("Create Tables")
@@ -67,6 +69,50 @@ class LobbyView(
         joinTables.prefHeight = 40.0
         createTables.prefHeight = 40.0
         logout.prefHeight = 40.0
+
+        createTables.setOnAction {
+
+            // Create the blackjack game backend
+            val blackjackTable = BlackjackTable(userName, 6)
+
+            // Create the player's wallet
+            // Default starting balance is 1000 chips
+            val wallet = Wallet()
+
+            // Create the blackjack table UI
+            val blackjackTableView = BlackjackTableView(
+                blackjackTable,
+                wallet
+            ) {
+                // Disconnect the current client
+                casinoClient.disconnect()
+
+                // Create a new client
+                val newClient = CasinoClient()
+
+                // Return to login screen
+                val login = LoginView(newClient)
+
+                val loginScene = Scene(
+                    login.getView(stage),
+                    800.0,
+                    600.0
+                )
+
+                stage.title = "Welcome to the casino"
+                stage.scene = loginScene
+            }
+
+            // Update the stage
+            val scene = Scene(
+                blackjackTableView,
+                800.0,
+                600.0
+            )
+
+            stage.title = "Table21 - Blackjack"
+            stage.scene = scene
+        }
 
         //logout button action
         logout.setOnAction{
