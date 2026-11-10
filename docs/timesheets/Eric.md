@@ -26,4 +26,5 @@
 	size as the visible dealer cards. Added a player total label to display 
 	the value of the player's hand, including proper Ace calculations and
 	split-hand totals. Also change most of the .server folder to support 
-	multiplayer game play and add double down.
+	multiplayer game play and add double down. NetworkMessage and userName in
+	blackjacktableview.kt currently does nothing.
