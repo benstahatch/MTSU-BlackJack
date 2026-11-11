@@ -50,6 +50,8 @@ class ClientHandler(
                 }
 
                 when (command) {
+                    // todo: add server-side admin authorization.
+                    "GET_HOUSE_BALANCE" -> send(tableSessionManager.houseBalance())
                     "PING" -> send("PONG")
                     "GET_TABLE_LIST" -> {
                         if (authenticatedUser == null) send("ERROR|Authentication required")
