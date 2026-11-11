@@ -28,6 +28,8 @@ class ClientHandler(
                 val argument = parts.getOrElse(1) { "" }
                 println("${socket.inetAddress.hostAddress}: $command")
                 when (command) {
+                    // todo: add server-side admin authorization.
+                    "GET_HOUSE_BALANCE" -> send(tableSessionManager.houseBalance())
                     "PING" -> send("PONG")
                     "JOIN_TABLE" -> {
                         val username = try {
