@@ -22,7 +22,22 @@ On each computer, open the project and run:
 .\gradlew.bat run
 ```
 
-The default client address in `src/main/kotlin/com/mtsu/table21/client/CasinoClient.kt` is `10.1.132.232`, the Windows host address used during the connection test. If the host's local IP changes, update `host` to the host computer's current IPv4 address. The port is `5555`.
+The client defaults to `127.0.0.1:5555`. For local play, start `./gradlew runServer` in one terminal and `./gradlew run` in another. Configure the server's database environment first using [database setup](database/README.md).
+
+For a server on another computer, set the address without editing source:
+
+```bash
+TABLE21_SERVER_HOST=192.168.1.25 ./gradlew run
+```
+
+In PowerShell:
+
+```powershell
+$env:TABLE21_SERVER_HOST = "192.168.1.25"
+.\gradlew.bat run
+```
+
+`TABLE21_SERVER_PORT` optionally overrides the client port (default `5555`; invalid values fall back to `5555`). The current server listens on `5555`; a different client port is useful with port forwarding. Blank host values fall back to localhost.
 
 All computers must be on the same Wi-Fi/LAN. The server computer must remain on and the server program must remain running.
 
@@ -42,4 +57,8 @@ All computers must be on the same Wi-Fi/LAN. The server computer must remain on 
 - The server owns the shoe, hands, turns, bets, and payouts while the server process is running.
 - Wallet balances are currently in memory. They are not yet loaded from or saved to the database, and a player who leaves and rejoins receives the default starting balance.
 - The login password and Create Account screen are placeholders. The current connection identifies players by username but does not authenticate or persist accounts.
-- The client/server source was checked by compiling the server and game model sources locally. A full Gradle/JavaFX build could not be run in this environment because the project's Gradle 9.7 distribution and JavaFX dependencies were not available for download. Run the Gradle commands above in your configured JDK 25 development environment and share any build error if one appears.
+- The lobby displays the last server-reported player balance, or waits for the first table join before showing a balance.
+- House accounting requires MySQL and the house migration. Bets use whole cents; fractional-cent blackjack payouts round half up to cents for both wallets.
+- Admin requests the house balance separately; it is never included in table broadcasts. Server-side admin authorization is still a TODO, so the command is not yet access-controlled.
+- If the house cannot pay or the database is unavailable at settlement, the round remains pending. After correcting the problem, use **Retry Payout** (`START_ROUND`) to retry settlement. There is no automatic refill.
+- House database transfers and in-memory player wallets cannot form a durable transaction. A server crash or an uncertain database commit can require manual reconciliation; persistent player identities and wallets remain a separate task.

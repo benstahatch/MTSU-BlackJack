@@ -3,6 +3,7 @@ package com.mtsu.table21.ui
 import com.mtsu.table21.client.CasinoClient
 import com.mtsu.table21.model.Card
 import javafx.application.Platform
+import javafx.beans.binding.Bindings
 import javafx.geometry.NodeOrientation
 import javafx.geometry.Pos
 import javafx.scene.control.Button
@@ -37,7 +38,16 @@ class BlackjackTableView(
     private var dealerCardsState: List<Card> = emptyList()
     private var playerState: List<PlayerSnapshot> = emptyList()
 
-    private val tablePane = Pane()
+    private val designContainer = StackPane().apply {
+        setMinSize(800.0, 600.0)
+        setPrefSize(800.0, 600.0)
+        setMaxSize(800.0, 600.0)
+    }
+    private val tablePane = Pane().apply {
+        setMinSize(800.0, 600.0)
+        setPrefSize(800.0, 600.0)
+        setMaxSize(800.0, 600.0)
+    }
     private val dealerCards = HBox(5.0)
     private val dealerTotal = Label("")
     private val playerNames = List(4) { Label("Seat ${it + 1} — Empty") }
@@ -58,8 +68,14 @@ class BlackjackTableView(
 
     init {
         prefWidth = 800.0; prefHeight = 600.0
-        minWidth = 800.0; minHeight = 600.0
-        maxWidth = 800.0; maxHeight = 600.0
+        setMinSize(0.0, 0.0)
+        setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE)
+        alignment = Pos.CENTER
+        style = "-fx-background-color: #123D2B;"
+        val scale = Bindings.min(widthProperty().divide(800.0), heightProperty().divide(600.0))
+        designContainer.scaleXProperty().bind(scale)
+        designContainer.scaleYProperty().bind(scale)
+        children.add(designContainer)
         createBackground()
         createTableOverlay()
         setupButtons()
@@ -71,9 +87,9 @@ class BlackjackTableView(
         val resource = javaClass.getResource("/images/BackGround blackjack/blackjack_table.png")
             ?: throw IllegalStateException("Missing blackjack_table.png in resources.")
         val background = ImageView(Image(resource.toExternalForm())).apply {
-            fitWidth = 800.0; fitHeight = 600.0; isPreserveRatio = false; isMouseTransparent = true
+            fitWidth = 800.0; fitHeight = 600.0; isPreserveRatio = true; isMouseTransparent = true
         }
-        children.addAll(background, tablePane)
+        designContainer.children.addAll(background, tablePane)
     }
 
     private fun createTableOverlay() {
@@ -196,6 +212,7 @@ class BlackjackTableView(
                     fields[4].toBoolean(), fields[5].toDouble(), fields[6], fields[7].toInt(), hands)
             } catch (_: Exception) { null }
         }
+        playerState.firstOrNull { it.id == myPlayerId }?.let { casinoClient.updatePlayerBalance(it.balance) }
         updateView()
     }
 
@@ -246,7 +263,8 @@ class BlackjackTableView(
         sitOutButton.isDisable = !betweenRounds || mine == null || !mine.optedIn
         betButton.isDisable = !betweenRounds || mine == null || mine.optedIn.not()
         betInput.isDisable = !betweenRounds || mine == null || mine.optedIn.not()
-        dealButton.isDisable = !betweenRounds || mine == null
+        dealButton.text = if (phase == "DEALER") "Retry Payout" else "Deal"
+        dealButton.isDisable = (!betweenRounds && phase != "DEALER") || mine == null
         hitButton.isDisable = !myTurn
         standButton.isDisable = !myTurn
         val currentHand = mine?.hands?.getOrNull(mine.handIndex)
@@ -256,7 +274,7 @@ class BlackjackTableView(
         if (phase == "PLAYERS") {
             val active = playerState.firstOrNull { it.id == currentPlayerId }
             statusLabel.text = if (myTurn) "Your turn — Player ${mySeat + 1}" else "${active?.name ?: "Waiting"}'s turn"
-        } else if (phase == "DEALER") statusLabel.text = "Dealer's turn"
+        } else if (phase == "DEALER") statusLabel.text = "Settlement pending. Retry payout after the server issue is resolved."
         else if (phase == "FINISHED") statusLabel.text = "Round finished. Choose Play This Round to join the next round."
         else if (mine != null) statusLabel.text = "Choose Play This Round, then set your bet."
     }

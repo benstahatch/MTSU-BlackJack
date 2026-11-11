@@ -19,7 +19,8 @@ class LobbyView(private val casinoClient: CasinoClient) {
     fun getView(userName: String, stage: Stage): VBox {
         val title = Label("Welcome to Table21")
         val username = Label("Welcome, $userName")
-        val chips = Label("Virtual starting balance: $1,000.00")
+        val chips = Label(casinoClient.playerBalance?.let { "Balance: ${java.text.NumberFormat.getCurrencyInstance(java.util.Locale.US).format(it)}" }
+            ?: "Balance available after joining")
         val tables = Label("Available Tables")
         val tableDescription = Label("Table #1  •  Blackjack  •  Up to 4 players")
         val status = Label("Choose Join Table or Create Table to sit down.")

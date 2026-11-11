@@ -8,9 +8,24 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** TCP client. One background thread reads server broadcasts; UI code never blocks waiting for a reply. */
 class CasinoClient(
-    private val host: String = "10.1.132.232",
-    private val port: Int = 5555
+    private val host: String = serverHost(System.getenv()),
+    private val port: Int = serverPort(System.getenv())
 ) {
+    companion object {
+        internal fun serverHost(environment: Map<String, String>): String =
+            environment["TABLE21_SERVER_HOST"]?.trim()?.takeIf { it.isNotEmpty() } ?: "127.0.0.1"
+
+        internal fun serverPort(environment: Map<String, String>): Int =
+            environment["TABLE21_SERVER_PORT"]?.toIntOrNull()?.takeIf { it in 1..65535 } ?: 5555
+    }
+
+    @Volatile var playerBalance: Double? = null
+        private set
+
+    fun updatePlayerBalance(balance: Double) {
+        if (balance.isFinite() && balance >= 0) playerBalance = balance
+    }
+
     @Volatile private var socket: Socket? = null
     @Volatile private var input: BufferedReader? = null
     @Volatile private var output: BufferedWriter? = null
@@ -56,6 +71,9 @@ class CasinoClient(
         try {
             while (connected.get()) {
                 val line = reader.readLine() ?: break
+                if (line.startsWith("JOINED|")) {
+                    line.split('|').getOrNull(3)?.toDoubleOrNull()?.let(::updatePlayerBalance)
+                }
                 listener?.invoke(line)
             }
         } catch (_: Exception) {

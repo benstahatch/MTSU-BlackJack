@@ -1,5 +1,6 @@
 package com.mtsu.table21.ui
 
+import javafx.application.Platform
 import javafx.stage.Stage
 import com.mtsu.table21.client.CasinoClient
 import javafx.geometry.Insets
@@ -138,10 +139,43 @@ class AdminView (private val casinoClient: CasinoClient){
             grid.columnConstraints.add(column)
         }
 
-        root.center = VBox(10.0, goldLine, welcome, grid)
+        val houseBalance = Label("House Balance: loading...").apply {
+            textFill = Color.GOLD
+            font = Font.font(24.0)
+        }
+        casinoClient.setMessageListener { message ->
+            Platform.runLater {
+                when {
+                    message.startsWith("HOUSE_BALANCE|") -> {
+                        val balance = message.substringAfter('|').toBigDecimalOrNull()
+                        houseBalance.text = balance?.let {
+                            "House Balance: ${java.text.NumberFormat.getCurrencyInstance(java.util.Locale.US).format(it)}"
+                        } ?: "House Balance unavailable"
+                    }
+                    message.startsWith("ERROR|") || message == "DISCONNECTED" ->
+                        houseBalance.text = "House Balance unavailable"
+                }
+            }
+        }
+        val refreshBalance = Button("Refresh Balance")
+        fun requestBalance() {
+            Thread({
+                val connected = casinoClient.connect()
+                val sent = connected && casinoClient.sendCommand("GET_HOUSE_BALANCE") == "SENT"
+                Platform.runLater {
+                    serverStatus.text = if (connected) "Server Connected" else "Server Disconnected"
+                    statusCircle.fill = if (connected) Color.LIGHTGREEN else Color.RED
+                    if (!sent) houseBalance.text = "House Balance unavailable"
+                }
+            }, "Table21-house-balance").apply { isDaemon = true; start() }
+        }
+        refreshBalance.setOnAction { requestBalance() }
+        requestBalance()
+        root.center = VBox(10.0, goldLine, welcome, houseBalance, refreshBalance, grid)
 
         //logout action
         logoutButton.setOnAction{
+            casinoClient.setMessageListener(null)
             casinoClient.disconnect()
             val login=LoginView(casinoClient)
             val scene = Scene(login.getView(stage), 800.0, 600.0)

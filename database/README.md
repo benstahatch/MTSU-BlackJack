@@ -112,3 +112,13 @@ Do not use `docker compose down -v` unless you intentionally want to delete the 
 - Passwords are stored as secure hashes, not plaintext.
 - Database connection settings are read from environment variables.
 - The credentials above are for local development only and should not be used in production.
+
+## House bankroll initialization
+
+`V005__initialize_house_balance.sql` sets the house bankroll to $100,000 on fresh databases without replacing the table. For an existing development database, stop the game server and run this once from the project root:
+
+```bash
+docker compose exec -T mysql mysql -utable21 -ptable21_dev table21 < database/migrations/V005__initialize_house_balance.sql
+```
+
+This intentionally sets the current bankroll to $100,000. Do not rerun it during normal play. No volume reset is needed. Wagers credit the house and payouts debit it; there is no automatic refill. Player wallets in multiplayer still live in server memory.

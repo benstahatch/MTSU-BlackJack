@@ -2,18 +2,17 @@ package com.mtsu.table21.server
 
 import com.mtsu.table21.game.BlackjackRules
 import com.mtsu.table21.game.Shoe
-import com.mtsu.table21.model.Bet
 import com.mtsu.table21.model.Card
 import com.mtsu.table21.model.Dealer
 import com.mtsu.table21.model.Hand
 import com.mtsu.table21.model.Player
 import com.mtsu.table21.model.Wallet
-import com.mtsu.table21.service.BettingService
+import com.mtsu.table21.database.HouseWalletRepository
 import java.util.Base64
 import java.util.UUID
 
 /** Owns the authoritative shared table. All public operations are synchronized. */
-class TableSessionManager {
+class TableSessionManager(private val houseWallet: HouseWalletRepository = HouseWalletRepository()) {
     private data class ServerPlayer(
         val id: String,
         val seat: Int,
@@ -31,7 +30,7 @@ class TableSessionManager {
     )
 
     private val shoe = Shoe(6)
-    private val bettingService = BettingService()
+    private val accounting = HouseAccounting(houseWallet)
     private val dealer = Dealer()
     private val players = arrayOfNulls<ServerPlayer>(4)
     private val writers = mutableMapOf<String, (String) -> Unit>()
@@ -41,6 +40,13 @@ class TableSessionManager {
     private var phase = "WAITING" // WAITING, PLAYERS, DEALER, FINISHED
     private var currentSeat = -1
     private var dealerHidden = true
+
+    @Synchronized
+    fun houseBalance(): String = try {
+        "HOUSE_BALANCE|${houseWallet.getBalance().toPlainString()}"
+    } catch (_: Exception) {
+        "ERROR|House balance unavailable"
+    }
 
     @Synchronized
     fun joinTable(tableId: String, playerId: String) {
@@ -77,11 +83,14 @@ class TableSessionManager {
     fun leaveTable(playerId: String) {
         val p = findPlayer(playerId) ?: return
         writers.remove(playerId)
-        if (phase == "PLAYERS" && !p.doneHands.contains(p.handIndex)) {
+        p.connected = false
+        if (phase == "PLAYERS" || phase == "DEALER") {
             p.doneHands.addAll(p.player.hands.indices)
-            if (currentSeat == p.seat) advanceTurn()
+            if (currentSeat == p.seat) {
+                try { advanceTurn() } catch (_: Exception) { p.result = "Settlement pending" }
+            }
         }
-        players[p.seat] = null
+        if (phase == "WAITING" || phase == "FINISHED") players[p.seat] = null
         if (players.all { it == null }) resetToWaiting()
         broadcastState()
     }
@@ -109,6 +118,7 @@ class TableSessionManager {
                     val amount = argument.toDoubleOrNull() ?: throw IllegalArgumentException("Enter a valid bet")
                     require(amount.isFinite() && amount > 0.0) { "Bet must be greater than zero" }
                     require(p.wallet.canAfford(amount)) { "Not enough chips" }
+                    require(java.math.BigDecimal.valueOf(amount).stripTrailingZeros().scale() <= 2) { "Use whole cents for bets" }
                     p.bet = amount
                     "OK|Bet set to ${"%.2f".format(amount)}"
                 }
@@ -135,6 +145,10 @@ class TableSessionManager {
     }
 
     private fun startRound() {
+        if (phase == "DEALER") {
+            playDealerAndSettle()
+            return
+        }
         require(phase == "WAITING" || phase == "FINISHED") { "The current round is not finished" }
         val active = players.filterNotNull().filter { it.connected && it.optedIn }
         require(active.isNotEmpty()) { "At least one player must choose Play This Round" }
@@ -142,6 +156,7 @@ class TableSessionManager {
             require(it.bet > 0.0) { "${it.player.name} must place a bet" }
             require(it.wallet.canAfford(it.bet)) { "${it.player.name} cannot afford the bet" }
         }
+        accounting.collect(active.map { it.wallet to it.bet })
         if (shoe.size() < 20) shoe.reset()
         dealer.resetHand()
         dealerHidden = true
@@ -157,9 +172,7 @@ class TableSessionManager {
             p.splitUsed = false
             p.result = if (p.optedIn) "Playing" else "Sitting out"
             if (p.optedIn) {
-                // BettingService removes the original wager from the player's wallet.
-                val placedBet = bettingService.placeBet(p.wallet, p.bet)
-                p.handBets.add(placedBet.amount)
+                p.handBets.add(p.bet)
             }
         }
         repeat(2) {
@@ -188,7 +201,7 @@ class TableSessionManager {
         require(BlackjackRules.canDoubleDown(hand)) { "Double down is only allowed on the first two cards" }
         val extra = p.handBets[p.handIndex]
         require(p.wallet.canAfford(extra)) { "Not enough chips to double down" }
-        p.wallet.removeChips(extra)
+        accounting.collect(listOf(p.wallet to extra))
         p.doubledHands.add(p.handIndex)
         hand.addCard(drawCard())
         finishCurrentHand(p)
@@ -200,7 +213,7 @@ class TableSessionManager {
         require(BlackjackRules.canSplit(hand)) { "You can only split matching ranks" }
         val extra = p.handBets[p.handIndex]
         require(p.wallet.canAfford(extra)) { "Not enough chips to split" }
-        p.wallet.removeChips(extra)
+        accounting.collect(listOf(p.wallet to extra))
         val secondCard = hand.removeCard(1)
         val secondHand = Hand()
         secondHand.addCard(secondCard)
@@ -251,6 +264,7 @@ class TableSessionManager {
         phase = "DEALER"
         dealerHidden = false
         while (BlackjackRules.shouldDealerHit(dealer.hand)) dealer.addCard(drawCard())
+        val payouts = mutableListOf<HouseAccounting.Payout>()
         players.filterNotNull().filter { it.optedIn }.forEach { p ->
             var anyWin = false
             p.player.hands.forEachIndexed { index, hand ->
@@ -274,28 +288,25 @@ class TableSessionManager {
                         !p.splitUsed &&
                         !dealer.hand.isBlackjack
 
-                // BettingService handles all wallet payouts consistently.
-                // The Bet passed here represents the full wager, including
-                // any additional amount committed by doubling down.
-                val settledBet = Bet(wager)
-                when (result) {
+                val outcome = when (result) {
                     BlackjackRules.Result.PLAYER_WIN -> {
-                        if (naturalBlackjack) {
-                            bettingService.payBlackjack(p.wallet, settledBet)
-                        } else {
-                            bettingService.payWin(p.wallet, settledBet)
-                        }
                         anyWin = true
+                        if (naturalBlackjack) HouseAccounting.Outcome.BLACKJACK else HouseAccounting.Outcome.WIN
                     }
-                    BlackjackRules.Result.PUSH -> bettingService.refundPush(p.wallet, settledBet)
-                    BlackjackRules.Result.DEALER_WIN -> Unit
+                    BlackjackRules.Result.PUSH -> HouseAccounting.Outcome.PUSH
+                    BlackjackRules.Result.DEALER_WIN -> HouseAccounting.Outcome.LOSS
                 }
+                payouts.add(HouseAccounting.Payout(p.wallet, wager, outcome))
             }
             p.result = if (anyWin) "Round complete - win" else "Round complete"
         }
+        accounting.settle(payouts)
         phase = "FINISHED"
         currentSeat = -1
-        players.filterNotNull().forEach { it.optedIn = false }
+        players.filterNotNull().forEach {
+            it.optedIn = false
+            if (!it.connected) players[it.seat] = null
+        }
     }
 
     private fun drawCard(): Card = shoe.dealCard() ?: run { shoe.reset(); shoe.dealCard()!! }
