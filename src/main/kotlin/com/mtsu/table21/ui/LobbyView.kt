@@ -1,160 +1,90 @@
 package com.mtsu.table21.ui
 
 import com.mtsu.table21.client.CasinoClient
-import com.mtsu.table21.game.BlackjackTable
-import com.mtsu.table21.model.Wallet
 import javafx.geometry.Insets
 import javafx.geometry.Pos
+import javafx.scene.Scene
 import javafx.scene.control.Button
 import javafx.scene.control.Label
-import javafx.scene.layout.Region
-import javafx.scene.layout.Priority
-import javafx.scene.layout.VBox
 import javafx.scene.layout.HBox
+import javafx.scene.layout.Priority
+import javafx.scene.layout.Region
+import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import javafx.scene.text.Font
-import javafx.scene.Scene
 import javafx.stage.Stage
+import java.util.Base64
 
-class LobbyView(
-    private val casinoClient: CasinoClient
-) {
-    fun getView(userName:String,stage: Stage): VBox {
-        val table = Label("Welcome to Table21")
+class LobbyView(private val casinoClient: CasinoClient) {
+    fun getView(userName: String, stage: Stage): VBox {
+        val title = Label("Welcome to Table21")
         val username = Label("Welcome, $userName")
-        //need to link chips into player system
-        val chips = Label("Chips: 1000")
+        val chips = Label("Virtual starting balance: $1,000.00")
         val tables = Label("Available Tables")
-        val joinTables = Button("Join Tables")
-        val createTables = Button("Create Tables")
+        val tableDescription = Label("Table #1  •  Blackjack  •  Up to 4 players")
+        val status = Label("Choose Join Table or Create Table to sit down.")
+        val join = Button("Join Table")
+        val create = Button("Create Table")
         val logout = Button("Logout")
 
-        table.font = Font.font("Arial",32.0)
-        table.textFill = Color.GOLD
+        title.font = Font.font("Arial", 32.0)
+        title.textFill = Color.GOLD
         username.font = Font.font(18.0)
         username.textFill = Color.WHITE
-        chips.font = Font.font(18.0)
+        chips.font = Font.font(15.0)
         chips.textFill = Color.GOLD
-
-        //add a box with it being near the top
-        val intoTop=HBox(
-            30.0,
-            username,
-            chips
-        )
-        intoTop.alignment = Pos.CENTER
-
         tables.font = Font.font(24.0)
         tables.textFill = Color.WHITE
-        tables.alignment = Pos.CENTER
+        tableDescription.textFill = Color.WHITE
+        status.textFill = Color.LIGHTGOLDENRODYELLOW
+        status.isWrapText = true
+        status.maxWidth = 560.0
 
-        // Style the buttons
         val buttonStyle = """
-        -fx-background-color: #E3C46B;
-        -fx-text-fill: #123D2B;
-        -fx-font-size: 16px;
-        -fx-font-weight: bold;
-        -fx-background-radius: 8px;
-        -fx-cursor: hand;
-        """
+            -fx-background-color: #E3C46B;
+            -fx-text-fill: #123D2B;
+            -fx-font-size: 16px;
+            -fx-font-weight: bold;
+            -fx-background-radius: 8px;
+            -fx-cursor: hand;
+        """.trimIndent()
+        listOf(join, create, logout).forEach {
+            it.style = buttonStyle
+            it.prefWidth = 200.0
+            it.prefHeight = 40.0
+        }
 
-        joinTables.style = buttonStyle
-        createTables.style = buttonStyle
-        logout.style = buttonStyle
-
-        joinTables.prefWidth = 200.0
-        createTables.prefWidth = 200.0
-        logout.prefWidth = 200.0
-
-        joinTables.prefHeight = 40.0
-        createTables.prefHeight = 40.0
-        logout.prefHeight = 40.0
-
-        createTables.setOnAction {
-
-            // Create the blackjack game backend
-            val blackjackTable = BlackjackTable(userName, 6)
-
-            // Create the player's wallet
-            // Default starting balance is 1000 chips
-            val wallet = Wallet()
-
-            // Create the blackjack table UI
-            val blackjackTableView = BlackjackTableView(
-                blackjackTable,
-                wallet
-            ) {
-                // Disconnect the current client
-                casinoClient.disconnect()
-
-                // Create a new client
-                val newClient = CasinoClient()
-
-                // Return to login screen
-                val login = LoginView(newClient)
-
-                val loginScene = Scene(
-                    login.getView(stage),
-                    800.0,
-                    600.0
-                )
-
-                stage.title = "Welcome to the casino"
-                stage.scene = loginScene
+        fun enterTable() {
+            if (!casinoClient.isConnected() && !casinoClient.connect()) {
+                status.text = "Cannot connect to the server. Check the server computer and Wi-Fi."
+                return
             }
-
-            // Update the stage
-            val scene = Scene(
-                blackjackTableView,
-                800.0,
-                600.0
-            )
-
+            val tableView = BlackjackTableView(casinoClient, userName) {
+                val lobby = LobbyView(casinoClient)
+                stage.scene = Scene(lobby.getView(userName, stage), 800.0, 600.0)
+            }
             stage.title = "Table21 - Blackjack"
-            stage.scene = scene
+            stage.scene = Scene(tableView, 800.0, 600.0)
+            val encodedName = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(userName.toByteArray(Charsets.UTF_8))
+            casinoClient.sendCommand("JOIN_TABLE|$encodedName")
         }
 
-        //logout button action
-        logout.setOnAction{
-
-            //disconnect current client from server
+        join.setOnAction { enterTable() }
+        create.setOnAction { enterTable() }
+        logout.setOnAction {
             casinoClient.disconnect()
-
-            //create a new client for login
-            val newClient=CasinoClient()
-
-            val login=LoginView(newClient)
-            val scene = Scene(login.getView(stage), 800.0, 600.0)
-            stage.scene = scene
+            stage.scene = Scene(LoginView(CasinoClient()).getView(stage), 800.0, 600.0)
         }
 
-        //bottom half of the screen
-        val bottom=VBox(
-            12.0,
-            joinTables,
-            createTables,
-            logout
-        )
-        bottom.alignment = Pos.CENTER
-
-        val topSpacer =Region()
-        val bottomSpacer=Region()
-        VBox.setVgrow(topSpacer , Priority.ALWAYS)
-        VBox.setVgrow(bottomSpacer, Priority.ALWAYS)
-
-        val layout = VBox(
-            20.0,
-            table,
-            intoTop,
-            topSpacer,
-            bottom,
-            bottomSpacer
-        )
-
-        layout.padding = Insets(25.0)
-        layout.alignment = Pos.CENTER
-        layout.style = "-fx-background-color: #123D2B;"
-
-        return layout
+        val top = HBox(25.0, username, chips).apply { alignment = Pos.CENTER }
+        val buttons = VBox(12.0, join, create, logout).apply { alignment = Pos.CENTER }
+        val spacer1 = Region().also { VBox.setVgrow(it, Priority.ALWAYS) }
+        val spacer2 = Region().also { VBox.setVgrow(it, Priority.ALWAYS) }
+        return VBox(18.0, title, top, spacer1, tables, tableDescription, buttons, status, spacer2).apply {
+            padding = Insets(25.0)
+            alignment = Pos.CENTER
+            style = "-fx-background-color: #123D2B;"
+        }
     }
 }
