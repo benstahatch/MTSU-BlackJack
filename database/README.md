@@ -41,7 +41,9 @@ The local development database uses:
 - Host: `127.0.0.1`
 - Port: `3307`
 
-Set these environment variables in your terminal:
+Set these environment variables only in the server terminal and when running database integration tests. Clients use `TABLE21_SERVER_HOST` and `TABLE21_SERVER_PORT` (defaults `127.0.0.1:5555`) and never access MySQL directly.
+
+Server settings:
 
 ```bash
 export TABLE21_DB_URL="jdbc:mysql://127.0.0.1:3307/table21"
@@ -121,4 +123,4 @@ Do not use `docker compose down -v` unless you intentionally want to delete the 
 docker compose exec -T mysql mysql -utable21 -ptable21_dev table21 < database/migrations/V005__initialize_house_balance.sql
 ```
 
-This intentionally sets the current bankroll to $100,000. Do not rerun it during normal play. No volume reset is needed. Wagers credit the house and payouts debit it; there is no automatic refill. Player wallets in multiplayer still live in server memory.
+This intentionally sets the current bankroll to $100,000. Do not rerun it during normal play. No volume reset is needed. Wagers credit the house and payouts debit it; there is no automatic refill. Authenticated player wallets are loaded from MySQL and saved after wagers and payouts. See [multiplayer setup](../MULTIPLAYER_SETUP.md) for authentication, reconnect testing, and crash-consistency limitations.
