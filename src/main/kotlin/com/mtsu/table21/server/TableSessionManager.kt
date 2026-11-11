@@ -12,12 +12,17 @@ import java.util.Base64
 import java.util.UUID
 
 /** Owns the authoritative shared table. All public operations are synchronized. */
-class TableSessionManager(private val houseWallet: HouseWalletRepository = HouseWalletRepository()) {
+class TableSessionManager(
+    private val houseWallet: HouseWalletRepository = HouseWalletRepository(),
+    private val wallets: com.mtsu.table21.database.WalletRepository = com.mtsu.table21.database.WalletRepository(),
+    private val shoe: Shoe = Shoe(6)
+) {
     private data class ServerPlayer(
+        val userId: Long,
         val id: String,
         val seat: Int,
         val player: Player,
-        val wallet: Wallet = Wallet(),
+        val wallet: Wallet,
         var optedIn: Boolean = false,
         var bet: Double = 0.0,
         val handBets: MutableList<Double> = mutableListOf(),
@@ -29,15 +34,15 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
         var connected: Boolean = true
     )
 
-    private val shoe = Shoe(6)
     private val accounting = HouseAccounting(houseWallet)
     private val dealer = Dealer()
     private val players = arrayOfNulls<ServerPlayer>(4)
     private val writers = mutableMapOf<String, (String) -> Unit>()
     // Retained for the original TableSessionManager unit tests and older callers.
     private val legacyTables = mutableMapOf<String, MutableSet<String>>()
+    private var persistenceFailed = false
     private var roundNumber = 0
-    private var phase = "WAITING" // WAITING, PLAYERS, DEALER, FINISHED
+    private var phase = "WAITING" // WAITING, PLAYERS, DEALER, FINISHED, ERROR
     private var currentSeat = -1
     private var dealerHidden = true
 
@@ -63,15 +68,19 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
     fun getPlayers(tableId: String): Set<String> = legacyTables[tableId]?.toSet() ?: emptySet()
 
     @Synchronized
-    fun joinTable(username: String, send: (String) -> Unit): String {
-        val cleanName = username.trim().take(18)
+    fun joinTable(userId: Long, username: String, send: (String) -> Unit): String {
+        if (persistenceFailed) return "ERROR|Table halted: wallet persistence failed; contact server operator"
+        val cleanName = username
         if (cleanName.isBlank()) return "ERROR|Username cannot be empty"
-        val existing = players.filterNotNull().firstOrNull { it.player.name.equals(cleanName, true) && it.connected }
-        if (existing != null) return "ERROR|That username is already at the table"
+        val existing = players.filterNotNull().firstOrNull { it.userId == userId }
+        if (existing != null) return "ERROR|This account already has a table session; wait for its round to finish"
         val seat = players.indexOfFirst { it == null }
         if (seat < 0) return "ERROR|Table is full (maximum 4 players)"
         val id = UUID.randomUUID().toString()
-        val record = ServerPlayer(id, seat, Player(cleanName))
+        val wallet = try {
+            wallets.findByUserId(userId).orElseThrow { IllegalStateException("Missing wallet") }
+        } catch (_: Exception) { return "ERROR|Player wallet unavailable" }
+        val record = ServerPlayer(userId, id, seat, Player(cleanName), wallet)
         players[seat] = record
         writers[id] = send
         send("JOINED|$id|$seat|${record.wallet.balance}")
@@ -84,10 +93,13 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
         val p = findPlayer(playerId) ?: return
         writers.remove(playerId)
         p.connected = false
-        if (phase == "PLAYERS" || phase == "DEALER") {
+        if (!persistenceFailed && (phase == "PLAYERS" || phase == "DEALER")) {
             p.doneHands.addAll(p.player.hands.indices)
             if (currentSeat == p.seat) {
-                try { advanceTurn() } catch (_: Exception) { p.result = "Settlement pending" }
+                try { advanceTurn() } catch (_: Exception) {
+                    p.result = "Settlement pending"
+                    writers.values.toList().forEach { try { it("ERROR|Settlement failed; contact server operator") } catch (_: Exception) { } }
+                }
             }
         }
         if (phase == "WAITING" || phase == "FINISHED") players[p.seat] = null
@@ -99,12 +111,17 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
     fun handle(playerId: String, command: String, argument: String = ""): String {
         val p = findPlayer(playerId) ?: return "ERROR|Join a table first"
         return try {
+            check(!persistenceFailed) { "Table halted: wallet persistence failed; contact server operator" }
             when (command) {
                 "OPT_IN" -> {
                     requireWaiting("You can only opt in between rounds")
+                    if (!p.optedIn) {
+                        p.bet = 0.0
+                        p.player.resetHand()
+                    }
                     p.optedIn = true
                     p.result = "Ready"
-                    "OK|You are playing this round"
+                    "OK|Enter your wager, then press Deal to bet and start"
                 }
                 "SIT_OUT" -> {
                     requireWaiting("You can only sit out between rounds")
@@ -115,14 +132,16 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
                 }
                 "PLACE_BET" -> {
                     requireWaiting("Bets can only be changed between rounds")
-                    val amount = argument.toDoubleOrNull() ?: throw IllegalArgumentException("Enter a valid bet")
-                    require(amount.isFinite() && amount > 0.0) { "Bet must be greater than zero" }
-                    require(p.wallet.canAfford(amount)) { "Not enough chips" }
-                    require(java.math.BigDecimal.valueOf(amount).stripTrailingZeros().scale() <= 2) { "Use whole cents for bets" }
-                    p.bet = amount
-                    "OK|Bet set to ${"%.2f".format(amount)}"
+                    setBet(p, argument)
+                    "OK|Bet set to ${"%.2f".format(p.bet)}; chips are deducted when dealt"
                 }
                 "START_ROUND" -> {
+                    // A supplied wager is validated before starting; never fall back to an old bet.
+                    if (argument.isNotEmpty()) {
+                        requireWaiting("The current round is not finished")
+                        require(p.optedIn) { "Choose Play This Round before placing a wager" }
+                        setBet(p, argument)
+                    }
                     startRound()
                     "OK|Round started"
                 }
@@ -135,6 +154,14 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
         } catch (e: Exception) {
             "ERROR|${e.message ?: "Command could not be completed"}"
         }.also { broadcastState() }
+    }
+
+    private fun setBet(p: ServerPlayer, argument: String) {
+        val amount = argument.toDoubleOrNull() ?: throw IllegalArgumentException("Enter a valid bet")
+        require(amount.isFinite() && amount > 0.0) { "Bet must be greater than zero" }
+        require(p.wallet.canAfford(amount)) { "Not enough chips" }
+        require(java.math.BigDecimal.valueOf(amount).stripTrailingZeros().scale() <= 2) { "Use whole cents for bets" }
+        p.bet = amount
     }
 
     private fun requireWaiting(message: String) { require(phase == "WAITING" || phase == "FINISHED") { message } }
@@ -157,6 +184,7 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
             require(it.wallet.canAfford(it.bet)) { "${it.player.name} cannot afford the bet" }
         }
         accounting.collect(active.map { it.wallet to it.bet })
+        persist(active)
         if (shoe.size() < 20) shoe.reset()
         dealer.resetHand()
         dealerHidden = true
@@ -202,6 +230,7 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
         val extra = p.handBets[p.handIndex]
         require(p.wallet.canAfford(extra)) { "Not enough chips to double down" }
         accounting.collect(listOf(p.wallet to extra))
+        persist(listOf(p))
         p.doubledHands.add(p.handIndex)
         hand.addCard(drawCard())
         finishCurrentHand(p)
@@ -214,6 +243,7 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
         val extra = p.handBets[p.handIndex]
         require(p.wallet.canAfford(extra)) { "Not enough chips to split" }
         accounting.collect(listOf(p.wallet to extra))
+        persist(listOf(p))
         val secondCard = hand.removeCard(1)
         val secondHand = Hand()
         secondHand.addCard(secondCard)
@@ -301,11 +331,27 @@ class TableSessionManager(private val houseWallet: HouseWalletRepository = House
             p.result = if (anyWin) "Round complete - win" else "Round complete"
         }
         accounting.settle(payouts)
+        persist(players.filterNotNull().filter { it.optedIn })
         phase = "FINISHED"
         currentSeat = -1
         players.filterNotNull().forEach {
             it.optedIn = false
             if (!it.connected) players[it.seat] = null
+        }
+    }
+
+    // House transfers and player writes are not one durable transaction. On a failed
+    // write halt this table, retaining identities and balances for operator reconciliation.
+    private fun persist(changed: List<ServerPlayer>) {
+        try {
+            changed.forEach {
+                wallets.setBalance(it.userId, java.math.BigDecimal.valueOf(it.wallet.balance)
+                    .setScale(2, java.math.RoundingMode.HALF_UP))
+            }
+        } catch (_: Exception) {
+            persistenceFailed = true
+            phase = "ERROR"
+            throw IllegalStateException("Table halted: wallet persistence failed; contact server operator")
         }
     }
 

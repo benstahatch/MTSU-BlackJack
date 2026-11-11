@@ -35,10 +35,39 @@ class LoginView(private val casinoClient: CasinoClient) {
                 message.text = "Could not connect to Table21 server at the configured address."
                 message.textFill = Color.RED
             } else {
-                message.text = "Connected to server."
-                message.textFill = Color.GREEN
-                val lobby = LobbyView(casinoClient)
-                stage.scene = Scene(lobby.getView(username, stage), 800.0, 600.0)
+                loginButton.isDisable = true
+                createUserButton.isDisable = true
+                adminButton.isDisable = true
+                casinoClient.setMessageListener { response ->
+                    javafx.application.Platform.runLater {
+                        if (response.startsWith("AUTH_OK|")) {
+                            passwordField.clear()
+                            casinoClient.setMessageListener(null)
+                            val authenticatedName = casinoClient.authenticatedUsername
+                            if (authenticatedName != null) {
+                                stage.scene = Scene(LobbyView(casinoClient).getView(
+                                    authenticatedName, stage), 800.0, 600.0)
+                            } else {
+                                stage.scene = Scene(LoginView(casinoClient).getView(stage), 800.0, 600.0)
+                            }
+                        } else if (response.startsWith("AUTH_ERROR|") || response == "DISCONNECTED") {
+                            loginButton.isDisable = false
+                            createUserButton.isDisable = false
+                            adminButton.isDisable = false
+                            message.text = response.substringAfter('|')
+                            message.textFill = Color.RED
+                        }
+                    }
+                }
+                val result = casinoClient.login(username, passwordField.text)
+                passwordField.clear()
+                if (result != "SENT") {
+                    loginButton.isDisable = false
+                    createUserButton.isDisable = false
+                    adminButton.isDisable = false
+                    message.text = "Could not send credentials; reconnect and try again."
+                    message.textFill = Color.RED
+                }
             }
         }
 

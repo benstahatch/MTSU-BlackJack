@@ -15,6 +15,15 @@ import static org.junit.jupiter.api.Assertions.*;
 public class WalletRepositoryTest {
 
     @Test
+    void rejectsInvalidSavedBalances() {
+        WalletRepository repository = new WalletRepository();
+        assertThrows(IllegalArgumentException.class,
+                () -> repository.setBalance(1, new BigDecimal("-1.00")));
+        assertThrows(ArithmeticException.class,
+                () -> repository.setBalance(1, new BigDecimal("1.001")));
+    }
+
+    @Test
     void testWalletOperations() throws Exception {
 
         UserRepository userRepository = new UserRepository();
@@ -69,7 +78,11 @@ public class WalletRepositoryTest {
                             .compareTo(walletRepository.getBalance(userId))
             );
 
-            System.out.println("Wallet repository test passed!");
+            walletRepository.setBalance(userId, new BigDecimal("1010.00"));
+            assertEquals(new BigDecimal("1010.00"), walletRepository.getBalance(userId));
+            walletRepository.setBalance(userId, BigDecimal.ZERO);
+            assertEquals(new BigDecimal("0.00"), walletRepository.getBalance(userId));
+            assertTrue(userRepository.findById(userId).isPresent());
 
         } finally {
             if (userId > 0) {

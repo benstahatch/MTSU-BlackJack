@@ -13,7 +13,6 @@ import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import javafx.scene.text.Font
 import javafx.stage.Stage
-import java.util.Base64
 
 class LobbyView(private val casinoClient: CasinoClient) {
     fun getView(userName: String, stage: Stage): VBox {
@@ -56,8 +55,8 @@ class LobbyView(private val casinoClient: CasinoClient) {
         }
 
         fun enterTable() {
-            if (!casinoClient.isConnected() && !casinoClient.connect()) {
-                status.text = "Cannot connect to the server. Check the server computer and Wi-Fi."
+            if (!casinoClient.isConnected() || casinoClient.authenticatedUserId == null) {
+                status.text = "Connection lost. Log out and log in again."
                 return
             }
             val tableView = BlackjackTableView(casinoClient, userName) {
@@ -66,9 +65,7 @@ class LobbyView(private val casinoClient: CasinoClient) {
             }
             stage.title = "Table21 - Blackjack"
             stage.scene = Scene(tableView, 800.0, 600.0)
-            val encodedName = Base64.getUrlEncoder().withoutPadding()
-                .encodeToString(userName.toByteArray(Charsets.UTF_8))
-            casinoClient.sendCommand("JOIN_TABLE|$encodedName")
+            casinoClient.sendCommand("JOIN_TABLE")
         }
 
         join.setOnAction { enterTable() }

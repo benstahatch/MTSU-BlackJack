@@ -90,9 +90,9 @@ class HouseAccountingTest {
     @Test
     fun sharedTableTransfersWagersAndSettlementsWithoutBroadcastingHouseBalance() {
         val house = House()
-        val manager = TableSessionManager(house)
+        val manager = TableSessionManager(house, MemoryWallets())
         var state = ""
-        val id = manager.joinTable("player") { if (it.startsWith("STATE|")) state = it }
+        val id = manager.joinTable(1, "player") { if (it.startsWith("STATE|")) state = it }
         fun playerBalance(): Double {
             val record = state.split('|')[6].split(',').first()
             return String(java.util.Base64.getUrlDecoder().decode(record)).split('~')[3].toDouble()
