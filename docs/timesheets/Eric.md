@@ -28,3 +28,4 @@
 	split-hand totals. Also change most of the .server folder to support 
 	multiplayer game play and add double down. NetworkMessage and userName in
 	blackjacktableview.kt currently does nothing.
+11/11 7:16

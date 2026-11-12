@@ -23,7 +23,7 @@ kotlin {
 
 javafx {
     version = "25"
-    modules("javafx.controls")
+    modules("javafx.controls", "javafx.media")
 }
 
 application {

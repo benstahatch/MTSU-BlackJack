@@ -23,6 +23,8 @@ class CasinoClient(
         private set
     @Volatile var authenticatedUsername: String? = null
         private set
+    @Volatile var isAdmin: Boolean = false
+        private set
     private var sessionPlayerId: String? = null
 
     fun login(username: String, password: String) = authenticate("LOGIN", username, password)
@@ -36,6 +38,7 @@ class CasinoClient(
     private fun clearSession() {
         authenticatedUserId = null
         authenticatedUsername = null
+        isAdmin = false
         playerBalance = null
         sessionPlayerId = null
     }
@@ -97,6 +100,7 @@ class CasinoClient(
                     authenticatedUserId = fields[1].toLong()
                     authenticatedUsername = String(java.util.Base64.getUrlDecoder().decode(fields[2]), Charsets.UTF_8)
                     updatePlayerBalance(fields[3].toDouble())
+                    isAdmin = fields.getOrNull(4) == "ADMIN"
                 }
                 if (line.startsWith("STATE|")) {
                     line.split('|').getOrNull(6)?.split(',')?.filter { it.isNotEmpty() }?.forEach {

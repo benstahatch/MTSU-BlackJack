@@ -45,12 +45,55 @@ class TableSessionManager(
     private var phase = "WAITING" // WAITING, PLAYERS, DEALER, FINISHED, ERROR
     private var currentSeat = -1
     private var dealerHidden = true
+    private var tableOpen = true
 
     @Synchronized
     fun houseBalance(): String = try {
         "HOUSE_BALANCE|${houseWallet.getBalance().toPlainString()}"
     } catch (_: Exception) {
         "ERROR|House balance unavailable"
+    }
+
+    @Synchronized
+    fun adminStatus(): String = listOf(
+        "ADMIN_STATUS", roundNumber.toString(), phase, currentSeat.toString(),
+        dealer.hand.cardCount.toString(), players.count { it != null }.toString(),
+        tableOpen.toString(), persistenceFailed.toString()
+    ).joinToString("|")
+
+    @Synchronized
+    fun adminPlayers(): String {
+        val records = players.filterNotNull().joinToString(",") { p ->
+            val fields = listOf(
+                encode(p.player.name), p.seat.toString(), p.wallet.balance.toString(),
+                p.bet.toString(), p.connected.toString(), p.result.ifBlank { "Waiting" }
+            ).joinToString("~")
+            encode(fields)
+        }
+        return "ADMIN_PLAYERS|$records"
+    }
+
+    @Synchronized
+    fun setTableOpen(open: Boolean): String {
+        if (phase == "PLAYERS" || phase == "DEALER") {
+            return "ERROR|The table can only be opened or closed between rounds"
+        }
+        tableOpen = open
+        return "ADMIN_TABLE|${if (tableOpen) "OPEN" else "CLOSED"}"
+    }
+
+    @Synchronized
+    fun kickPlayer(username: String): String {
+        if (phase == "PLAYERS" || phase == "DEALER") {
+            return "ERROR|Players cannot be removed during an active round"
+        }
+        val target = players.filterNotNull().firstOrNull { it.player.name.equals(username, ignoreCase = true) }
+            ?: return "ERROR|Player is not currently at the table"
+        try { writers.remove(target.id)?.invoke("KICKED|An administrator removed you from the table") }
+        catch (_: Exception) { writers.remove(target.id) }
+        players[target.seat] = null
+        broadcastState()
+        return "ADMIN_KICKED|${target.player.name}"
     }
 
     @Synchronized
@@ -69,6 +112,7 @@ class TableSessionManager(
 
     @Synchronized
     fun joinTable(userId: Long, username: String, send: (String) -> Unit): String {
+        if (!tableOpen) return "ERROR|Table is currently closed by an administrator"
         if (persistenceFailed) return "ERROR|Table halted: wallet persistence failed; contact server operator"
         val cleanName = username
         if (cleanName.isBlank()) return "ERROR|Username cannot be empty"

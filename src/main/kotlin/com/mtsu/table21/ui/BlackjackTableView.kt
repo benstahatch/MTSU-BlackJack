@@ -15,6 +15,7 @@ import javafx.scene.layout.HBox
 import javafx.scene.layout.Pane
 import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
+import javafx.scene.media.AudioClip
 import javafx.scene.text.Font
 import javafx.scene.text.FontWeight
 import java.util.Base64
@@ -37,6 +38,11 @@ class BlackjackTableView(
     private var dealerHidden = true
     private var dealerCardsState: List<Card> = emptyList()
     private var playerState: List<PlayerSnapshot> = emptyList()
+    private var previousVisibleCardCount = 0
+    private var receivedFirstState = false
+    private val cardSound: AudioClip? = javaClass.getResource("/sounds/freesound_community-flipcard-91468.mp3")?.toExternalForm()?.let {
+        try { AudioClip(it).apply { volume = 0.35 } } catch (_: Exception) { null }
+    }
 
     private val designContainer = StackPane().apply {
         setMinSize(800.0, 600.0)
@@ -205,6 +211,12 @@ class BlackjackTableView(
             line.startsWith("OK|") -> statusLabel.text = line.substringAfter('|')
             line.startsWith("STATE|") -> parseState(line)
             line == "LEFT" -> statusLabel.text = "You left the table."
+            line.startsWith("KICKED|") -> {
+                statusLabel.text = line.substringAfter('|')
+                casinoClient.sendCommand("LEAVE_TABLE")
+                casinoClient.setMessageListener(null)
+                onQuit()
+            }
         }
     }
 
@@ -225,6 +237,12 @@ class BlackjackTableView(
             } catch (_: Exception) { null }
         }
         playerState.firstOrNull { it.id == myPlayerId }?.let { casinoClient.updatePlayerBalance(it.balance) }
+        val visibleCardCount = dealerCardsState.size + playerState.sumOf { player -> player.hands.sumOf { it.size } }
+        if (receivedFirstState && visibleCardCount > previousVisibleCardCount) {
+            cardSound?.play()
+        }
+        previousVisibleCardCount = visibleCardCount
+        receivedFirstState = true
         updateView()
     }
 

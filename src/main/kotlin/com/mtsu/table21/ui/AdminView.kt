@@ -1,236 +1,115 @@
 package com.mtsu.table21.ui
 
-import javafx.application.Platform
-import javafx.stage.Stage
 import com.mtsu.table21.client.CasinoClient
+import com.mtsu.table21.ui.admin.GameStatusView
+import com.mtsu.table21.ui.admin.ManageTableView
+import com.mtsu.table21.ui.admin.PlayerView
+import com.mtsu.table21.ui.admin.ServerInfoView
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.Scene
 import javafx.scene.control.Button
 import javafx.scene.control.Label
 import javafx.scene.layout.BorderPane
-import javafx.scene.layout.ColumnConstraints
 import javafx.scene.layout.GridPane
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Priority
+import javafx.scene.layout.Region
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import javafx.scene.text.Font
-import javafx.scene.layout.Region
-import javafx.scene.shape.Circle
+import javafx.stage.Stage
 
-class AdminView (private val casinoClient: CasinoClient){
+class AdminView(private val casinoClient: CasinoClient) {
     fun getView(stage: Stage): BorderPane {
-        //creates a border like sence with four thing
-        val root = BorderPane()
-        root.padding = Insets(25.0)
-        root.style="-fx-background-color: #063D2B;"
-
-        //create val for admin screens
-        val title = Label("♠ Table21")
-        title.font = Font.font(30.0)
-        title.textFill = Color.web("#F4D27A")
-
-        val adminPanel = Label("ADMIN PANEL")
-        adminPanel.font = Font.font(30.0)
-        adminPanel.textFill = Color.WHITE
-
-        val titleArea = HBox(15.0, title, adminPanel)
-
-        val tableButton = Button("Manage Tables")
-        val playerButton = Button("View Players")
-        val statusButton = Button("View Game Status")
-        val serverButton = Button("View Server Info")
-        val logoutButton = Button("⇥  Logout")
-
-        //button width
-        tableButton.prefWidth=250.0
-        playerButton.prefWidth=250.0
-        statusButton.prefWidth=250.0
-        serverButton.prefWidth=250.0
-        logoutButton.prefWidth=150.0
-        logoutButton.prefHeight = 42.0
-        logoutButton.style = """
-            -fx-background-color: transparent;
-            -fx-border-color: #F4D27A;
-            -fx-border-width: 2;
-            -fx-border-radius: 8;
-            -fx-text-fill: #F4D27A;
-            -fx-font-size: 15px;
-            -fx-cursor: hand;
-        """
-
-        //sever status
-        val statusCircle = Circle(6.0, Color.LIGHTGREEN)
-        val serverStatus=Label("Server Connected")
-        serverStatus.textFill = Color.LIGHTGREEN
-        serverStatus.font = Font.font(14.0)
-
-        val serverText = HBox(8.0, statusCircle, serverStatus)
-        serverText.padding = Insets(10.0, 16.0, 10.0, 16.0)
-        serverText.style = """
-            -fx-background-color: transparent;
-            -fx-border-color: #00C781;
-            -fx-border-width: 2;
-            -fx-border-radius: 25;
-            -fx-background-radius: 25;
-        """
-        serverText.alignment = Pos.CENTER
-
-        //header of the screen
-        val header=BorderPane()
-        header.left = titleArea
-        header.right = serverText
-        header.padding = Insets(0.0, 0.0, 15.0, 0.0)
+        val root = BorderPane().apply {
+            padding = Insets(22.0)
+            style = "-fx-background-color: #063D2B;"
+        }
+        val title = Label("♠ Table21  |  ADMIN PANEL").apply {
+            font = Font.font("Arial", 27.0)
+            textFill = Color.web("#F4D27A")
+        }
+        val welcome = Label("Administrator: ${casinoClient.authenticatedUsername ?: "Unknown"}").apply {
+            textFill = Color.WHITE
+            font = Font.font(14.0)
+        }
+        val header = VBox(7.0, title, welcome).apply { padding = Insets(0.0, 0.0, 18.0, 0.0) }
         root.top = header
 
-        // Gold line under the header
-        val goldLine = Region()
-        goldLine.prefHeight = 2.0
-        goldLine.maxHeight = 2.0
-        goldLine.style = "-fx-background-color: #F4D27A;"
+        val content = VBox(15.0)
+        content.alignment = Pos.CENTER
+        root.center = content
 
-        //wecome message
-        val welcome = Label("Welcome, Admin ")
-        welcome.font = Font.font(15.0)
-        welcome.textFill = Color.WHITE
-
-        //divide the border into four section as cards
-        val grid = GridPane()
-        grid.hgap = 20.0
-        grid.vgap = 20.0
-        grid.padding = Insets(20.0, 0.0, 20.0, 0.0)
-
-        //the differect cards
-        val tableCard = createCard(
-            "Manage Table",
-            "View, create, open, and close blackjack tables.",
-            tableButton
-        )
-
-        val playerCard = createCard(
-            "View Players",
-            "See connected players and their table assignments.",
-            playerButton
-        )
-
-        val statusCard = createCard(
-            "Game Status",
-            "Monitor active games and current rounds.",
-            statusButton
-        )
-
-        val serverCard = createCard(
-            "Server Information",
-            "Check server connections, uptime, and system logs.",
-            serverButton
-        )
-
-        grid.add(tableCard, 0,0 )
-        grid.add(playerCard, 1 ,0)
-        grid.add(statusCard, 0 ,1)
-        grid.add(serverCard, 1 ,1)
-
-        // Give both columns equal width
-        (0..1).forEach { _ ->
-            val column = ColumnConstraints()
-            column.hgrow = Priority.ALWAYS
-            column.percentWidth = 50.0
-            grid.columnConstraints.add(column)
+        fun showScreen(screen: VBox) {
+            content.children.setAll(screen)
         }
 
-        val houseBalance = Label("House Balance: loading...").apply {
-            textFill = Color.GOLD
-            font = Font.font(24.0)
-        }
-        casinoClient.setMessageListener { message ->
-            Platform.runLater {
-                when {
-                    message.startsWith("HOUSE_BALANCE|") -> {
-                        val balance = message.substringAfter('|').toBigDecimalOrNull()
-                        houseBalance.text = balance?.let {
-                            "House Balance: ${java.text.NumberFormat.getCurrencyInstance(java.util.Locale.US).format(it)}"
-                        } ?: "House Balance unavailable"
-                    }
-                    message.startsWith("ERROR|") || message == "DISCONNECTED" ->
-                        houseBalance.text = "House Balance unavailable"
+        fun showHome() {
+            content.children.clear()
+            val heading = Label("Administration Tools").apply {
+                textFill = Color.WHITE
+                font = Font.font("Arial", 22.0)
+            }
+            val description = Label("Monitor the live blackjack table, manage seated players, and check server information.").apply {
+                textFill = Color.web("#D8E7DC")
+                isWrapText = true
+                maxWidth = 560.0
+            }
+            val grid = GridPane().apply { hgap = 18.0; vgap = 18.0; maxWidth = 620.0 }
+            fun navButton(text: String, detail: String, action: () -> Unit): VBox {
+                val button = Button(text).apply {
+                    maxWidth = Double.MAX_VALUE
+                    prefHeight = 42.0
+                    style = "-fx-background-color: #E6C66C; -fx-text-fill: #063D2B; -fx-font-weight: bold; -fx-font-size: 14px; -fx-background-radius: 7; -fx-cursor: hand;"
+                    setOnAction { action() }
+                }
+                val textLabel = Label(detail).apply {
+                    textFill = Color.web("#D8E7DC")
+                    isWrapText = true
+                    maxWidth = Double.MAX_VALUE
+                }
+                return VBox(10.0, button, textLabel).apply {
+                    padding = Insets(18.0)
+                    minWidth = 270.0
+                    minHeight = 115.0
+                    style = "-fx-background-color: #0A4937; -fx-border-color: #168A70; -fx-border-radius: 9; -fx-background-radius: 9;"
+                    GridPane.setHgrow(this, Priority.ALWAYS)
                 }
             }
+            grid.add(navButton("Manage Tables", "Open or close Table #1 between rounds.") {
+                showScreen(ManageTableView(casinoClient).getView(::showHome))
+            }, 0, 0)
+            grid.add(navButton("View Players", "See player names, seats, balances, and table status.") {
+                showScreen(PlayerView(casinoClient).getView(::showHome))
+            }, 1, 0)
+            grid.add(navButton("Game Status", "Monitor the current round, phase, dealer, and player count.") {
+                showScreen(GameStatusView(casinoClient).getView(::showHome))
+            }, 0, 1)
+            grid.add(navButton("Server Information", "Check uptime, active connections, port, and house balance.") {
+                showScreen(ServerInfoView(casinoClient).getView(::showHome))
+            }, 1, 1)
+            content.children.addAll(heading, description, grid)
         }
-        val refreshBalance = Button("Refresh Balance")
-        fun requestBalance() {
-            Thread({
-                val connected = casinoClient.connect()
-                val sent = connected && casinoClient.sendCommand("GET_HOUSE_BALANCE") == "SENT"
-                Platform.runLater {
-                    serverStatus.text = if (connected) "Server Connected" else "Server Disconnected"
-                    statusCircle.fill = if (connected) Color.LIGHTGREEN else Color.RED
-                    if (!sent) houseBalance.text = "House Balance unavailable"
-                }
-            }, "Table21-house-balance").apply { isDaemon = true; start() }
-        }
-        refreshBalance.setOnAction { requestBalance() }
-        requestBalance()
-        root.center = VBox(10.0, goldLine, welcome, houseBalance, refreshBalance, grid)
+        showHome()
 
-        //logout action
-        logoutButton.setOnAction{
-            casinoClient.setMessageListener(null)
-            casinoClient.disconnect()
-            val login=LoginView(casinoClient)
-            val scene = Scene(login.getView(stage), 800.0, 600.0)
-            stage.scene = scene
+        val logout = Button("⇥  Logout").apply {
+            prefWidth = 140.0
+            prefHeight = 40.0
+            style = "-fx-background-color: transparent; -fx-border-color: #F4D27A; -fx-border-width: 2; -fx-border-radius: 8; -fx-text-fill: #F4D27A; -fx-font-size: 14px; -fx-cursor: hand;"
+            setOnAction {
+                casinoClient.setMessageListener(null)
+                casinoClient.disconnect()
+                stage.scene = Scene(LoginView(CasinoClient()).getView(stage), 800.0, 600.0)
+            }
         }
-        val bottom = HBox(logoutButton)
-        bottom.alignment = Pos.CENTER_RIGHT
-        bottom.padding = Insets(0.0, 0.0, 0.0, 0.0)
-
-        root.bottom = bottom
+        root.bottom = HBox(logout).apply {
+            alignment = Pos.CENTER_RIGHT
+            padding = Insets(15.0, 0.0, 0.0, 0.0)
+        }
+        if (!casinoClient.isAdmin) {
+            root.center = Label("Administrator access required.").apply { textFill = Color.WHITE }
+        }
         return root
-    }
-
-    //creates the card funtion for different cards
-    private fun createCard(title: String, text: String, button: Button): VBox {
-        val titles = Label(title)
-        titles.font = Font.font(21.0)
-        titles.textFill = Color.WHITE
-        titles.alignment = Pos.CENTER
-        titles.maxWidth = Double.MAX_VALUE
-
-        val details = Label(text)
-        details.font = Font.font(14.0)
-        details.textFill = Color.web("#D8E7DC")
-        details.isWrapText = true
-        details.alignment = Pos.CENTER_LEFT
-        details.maxWidth = Double.MAX_VALUE
-
-        button.maxWidth = Double.MAX_VALUE
-        button.style = """
-            -fx-background-color: #E6C66C;
-            -fx-text-fill: #063D2B;
-            -fx-font-weight: bold;
-            -fx-font-size: 14px;
-            -fx-background-radius: 7;
-            -fx-cursor: hand;
-        """
-        val card = VBox(12.0,
-            titles,
-            details,
-            button)
-        card.padding = Insets(20.0)
-        card.alignment = Pos.CENTER_LEFT
-        card.minHeight = 175.0
-        card.maxWidth = Double.MAX_VALUE
-        card.style = """
-            -fx-background-color: #0A4937;
-            -fx-border-color: #168A70;
-            -fx-border-radius: 10;
-            -fx-background-radius: 10;
-        """
-
-        GridPane.setHgrow(card, Priority.ALWAYS)
-        GridPane.setVgrow(card, Priority.ALWAYS)
-
-        return card
     }
 }

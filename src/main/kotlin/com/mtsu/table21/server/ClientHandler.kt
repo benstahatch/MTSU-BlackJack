@@ -11,7 +11,9 @@ class ClientHandler(
     override fun run() {
         var playerId: String? = null
         var authenticatedUser: com.mtsu.table21.model.User? = null
-        val output = socket.getOutputStream().bufferedWriter(Charsets.UTF_8)
+        var adminAuthorized = false
+        var metricsOpened = false
+        lateinit var output: java.io.BufferedWriter
         val writeLock = Any()
         fun send(line: String) {
             synchronized(writeLock) {
@@ -21,6 +23,9 @@ class ClientHandler(
             }
         }
         try {
+            ServerMetrics.connectionOpened()
+            metricsOpened = true
+            output = socket.getOutputStream().bufferedWriter(Charsets.UTF_8)
             socket.tcpNoDelay = true
             val input = socket.getInputStream().bufferedReader(Charsets.UTF_8)
             send("CONNECTED")
@@ -31,9 +36,29 @@ class ClientHandler(
                 val argument = parts.getOrElse(1) { "" }
 
                 when (command) {
-                    // todo: add server-side admin authorization.
-                    "GET_HOUSE_BALANCE" -> send(tableSessionManager.houseBalance())
                     "PING" -> send("PONG")
+                    "GET_HOUSE_BALANCE", "GET_ADMIN_STATUS", "GET_ADMIN_PLAYERS", "GET_ADMIN_SERVER" -> {
+                        if (!adminAuthorized) send("ERROR|Administrator access required")
+                        else when (command) {
+                            "GET_HOUSE_BALANCE" -> send(tableSessionManager.houseBalance())
+                            "GET_ADMIN_STATUS" -> send(tableSessionManager.adminStatus())
+                            "GET_ADMIN_PLAYERS" -> send(tableSessionManager.adminPlayers())
+                            "GET_ADMIN_SERVER" -> send(ServerMetrics.info(5555))
+                        }
+                    }
+                    "SET_TABLE_OPEN" -> {
+                        if (!adminAuthorized) send("ERROR|Administrator access required")
+                        else send(tableSessionManager.setTableOpen(argument.equals("true", true)))
+                    }
+                    "ADMIN_KICK" -> {
+                        if (!adminAuthorized) send("ERROR|Administrator access required")
+                        else try {
+                            val username = String(java.util.Base64.getUrlDecoder().decode(argument.trim()), Charsets.UTF_8)
+                            send(tableSessionManager.kickPlayer(username))
+                        } catch (_: IllegalArgumentException) {
+                            send("ERROR|Invalid player selection")
+                        }
+                    }
                     "LOGIN", "REGISTER" -> {
                         if (authenticatedUser != null) {
                             send("AUTH_ERROR|Already authenticated; disconnect to switch accounts")
@@ -48,14 +73,19 @@ class ClientHandler(
                             val username = decode(credentials[0])
                             val password = decode(credentials[1])
                             val user = if (command == "REGISTER") accounts.register(username, password)
-                                else accounts.login(username, password).orElse(null)
+                            else accounts.login(username, password).orElse(null)
                             if (user == null) send("AUTH_ERROR|Invalid username or password")
                             else {
                                 val balance = wallets.getBalance(user.id)
                                 authenticatedUser = user
+                                // Use database user IDs, not usernames, so a stranger cannot
+                                // claim an allowlisted admin name by registering it first.
+                                val adminIds = System.getenv("TABLE21_ADMIN_USER_IDS").orEmpty()
+                                    .split(',').mapNotNull { it.trim().toLongOrNull() }
+                                adminAuthorized = user.id in adminIds
                                 val name = java.util.Base64.getUrlEncoder().withoutPadding()
                                     .encodeToString(user.username.toByteArray(Charsets.UTF_8))
-                                send("AUTH_OK|${user.id}|$name|${balance.toPlainString()}")
+                                send("AUTH_OK|${user.id}|$name|${balance.toPlainString()}|${if (adminAuthorized) "ADMIN" else "PLAYER"}")
                             }
                         } catch (e: IllegalArgumentException) {
                             // Only service validation messages are safe; decoder errors are generic.
@@ -101,6 +131,7 @@ class ClientHandler(
         } finally {
             playerId?.let { tableSessionManager.leaveTable(it) }
             try { socket.close() } catch (_: Exception) { }
+            if (metricsOpened) ServerMetrics.connectionClosed()
             println("Client disconnected.")
         }
     }

@@ -21,6 +21,7 @@ class MainApp : Application() {
         // set up the main application window
         stage.title = "Welcome to the casino"
         stage.scene = scene
+        stage.setOnCloseRequest { casinoClient.disconnect() }
 
         // show the application
         stage.show()
