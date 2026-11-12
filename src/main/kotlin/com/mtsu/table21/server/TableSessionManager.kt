@@ -61,6 +61,11 @@ class TableSessionManager(
         tableOpen.toString(), persistenceFailed.toString()
     ).joinToString("|")
 
+    /** True only when no player is seated and the table is between rounds. */
+    @Synchronized
+    fun isEmptyForCleanup(): Boolean =
+        players.all { it == null } && (phase == "WAITING" || phase == "FINISHED")
+
     @Synchronized
     fun adminPlayers(): String {
         val records = players.filterNotNull().joinToString(",") { p ->
@@ -124,13 +129,23 @@ class TableSessionManager(
         val wallet = try {
             wallets.findByUserId(userId).orElseThrow { IllegalStateException("Missing wallet") }
         } catch (_: Exception) { return "ERROR|Player wallet unavailable" }
-        val record = ServerPlayer(userId, id, seat, Player(cleanName), wallet)
+        // Players joining between rounds are automatically seated and opted in.
+        // A player joining during an active round is seated for the next round.
+        val autoOptIn = phase == "WAITING" || phase == "FINISHED"
+        val record = ServerPlayer(
+            userId, id, seat, Player(cleanName), wallet,
+            optedIn = autoOptIn,
+            result = if (autoOptIn) "Ready" else "Waiting for next round"
+        )
         players[seat] = record
         writers[id] = send
         send("JOINED|$id|$seat|${record.wallet.balance}")
         broadcastState()
         return id
     }
+
+    @Synchronized
+    fun userIdForPlayer(playerId: String): Long? = findPlayer(playerId)?.userId
 
     @Synchronized
     fun leaveTable(playerId: String) {
@@ -157,6 +172,10 @@ class TableSessionManager(
         return try {
             check(!persistenceFailed) { "Table halted: wallet persistence failed; contact server operator" }
             when (command) {
+                "REQUEST_STATE" -> {
+                    broadcastState()
+                    "OK|Table state refreshed"
+                }
                 "OPT_IN" -> {
                     requireWaiting("You can only opt in between rounds")
                     if (!p.optedIn) {
@@ -221,8 +240,10 @@ class TableSessionManager(
             return
         }
         require(phase == "WAITING" || phase == "FINISHED") { "The current round is not finished" }
-        val active = players.filterNotNull().filter { it.connected && it.optedIn }
-        require(active.isNotEmpty()) { "At least one player must choose Play This Round" }
+        // An opted-in player is eligible only after entering a valid wager.
+        // This prevents a newly seated player with no bet from blocking everyone else.
+        val active = players.filterNotNull().filter { it.connected && it.optedIn && it.bet > 0.0 }
+        require(active.isNotEmpty()) { "At least one seated player must place a bet before the round can start" }
         active.forEach {
             require(it.bet > 0.0) { "${it.player.name} must place a bet" }
             require(it.wallet.canAfford(it.bet)) { "${it.player.name} cannot afford the bet" }
@@ -242,8 +263,9 @@ class TableSessionManager(
             p.doneHands.clear()
             p.handIndex = 0
             p.splitUsed = false
-            p.result = if (p.optedIn) "Playing" else "Sitting out"
-            if (p.optedIn) {
+            val isPlayingThisRound = p in active
+            p.result = if (isPlayingThisRound) "Playing" else "Sitting out"
+            if (isPlayingThisRound) {
                 p.handBets.add(p.bet)
             }
         }
