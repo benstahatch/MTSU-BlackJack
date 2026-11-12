@@ -28,8 +28,3 @@
 	split-hand totals. Also change most of the .server folder to support 
 	multiplayer game play and add double down. NetworkMessage and userName in
 	blackjacktableview.kt currently does nothing.
-11/11 7:16
-	Add adminview subview for it. Add a true multi-table set up instead of
-	having a hardcoded table. Made it so that a user can be an admin using 
-	terminal commands. Add a flip sound effect when the dealer deals cards
-	

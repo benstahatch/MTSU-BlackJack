@@ -23,8 +23,6 @@ class CasinoClient(
         private set
     @Volatile var authenticatedUsername: String? = null
         private set
-    @Volatile var isAdmin: Boolean = false
-        private set
     private var sessionPlayerId: String? = null
 
     fun login(username: String, password: String) = authenticate("LOGIN", username, password)
@@ -38,7 +36,6 @@ class CasinoClient(
     private fun clearSession() {
         authenticatedUserId = null
         authenticatedUsername = null
-        isAdmin = false
         playerBalance = null
         sessionPlayerId = null
     }
@@ -56,6 +53,9 @@ class CasinoClient(
     @Volatile private var listener: ((String) -> Unit)? = null
     private val connected = AtomicBoolean(false)
     private val writeLock = Any()
+
+    @Volatile private var bankruptcyListener: (() -> Unit)? = null
+    fun setBankruptcyListener(callback: (() -> Unit)?) { bankruptcyListener = callback }
 
     fun setMessageListener(callback: ((String) -> Unit)?) {
         listener = callback
@@ -95,12 +95,17 @@ class CasinoClient(
         try {
             while (connected.get() && socket === connection) {
                 val line = reader.readLine() ?: break
+                if (line.startsWith("BANKRUPT|")) {
+                    clearSession()
+                    bankruptcyListener?.invoke()
+                    listener?.invoke(line)
+                    break
+                }
                 if (line.startsWith("AUTH_OK|")) {
                     val fields = line.split('|')
                     authenticatedUserId = fields[1].toLong()
                     authenticatedUsername = String(java.util.Base64.getUrlDecoder().decode(fields[2]), Charsets.UTF_8)
                     updatePlayerBalance(fields[3].toDouble())
-                    isAdmin = fields.getOrNull(4) == "ADMIN"
                 }
                 if (line.startsWith("STATE|")) {
                     line.split('|').getOrNull(6)?.split(',')?.filter { it.isNotEmpty() }?.forEach {

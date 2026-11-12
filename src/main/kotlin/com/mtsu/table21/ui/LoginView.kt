@@ -22,6 +22,7 @@ class LoginView(private val casinoClient: CasinoClient) {
         val passwordField = PasswordField().apply { promptText = "Enter password"; maxWidth = 300.0 }
         val loginButton = Button("LOGIN").apply { prefWidth = 300.0 }
         val createUserButton = Button("Create Account").apply { prefWidth = 300.0 }
+        val adminButton = Button("ADMIN").apply { prefWidth = 300.0 }
         val quitButton = Button("QUIT").apply { prefWidth = 300.0 }
         val message = Label()
 
@@ -36,15 +37,14 @@ class LoginView(private val casinoClient: CasinoClient) {
             } else {
                 loginButton.isDisable = true
                 createUserButton.isDisable = true
+                adminButton.isDisable = true
                 casinoClient.setMessageListener { response ->
                     javafx.application.Platform.runLater {
                         if (response.startsWith("AUTH_OK|")) {
                             passwordField.clear()
                             casinoClient.setMessageListener(null)
                             val authenticatedName = casinoClient.authenticatedUsername
-                            if (authenticatedName != null && casinoClient.isAdmin) {
-                                stage.scene = Scene(AdminView(casinoClient).getView(stage), 800.0, 600.0)
-                            } else if (authenticatedName != null) {
+                            if (authenticatedName != null) {
                                 stage.scene = Scene(LobbyView(casinoClient).getView(
                                     authenticatedName, stage), 800.0, 600.0)
                             } else {
@@ -53,6 +53,7 @@ class LoginView(private val casinoClient: CasinoClient) {
                         } else if (response.startsWith("AUTH_ERROR|") || response == "DISCONNECTED") {
                             loginButton.isDisable = false
                             createUserButton.isDisable = false
+                            adminButton.isDisable = false
                             message.text = response.substringAfter('|')
                             message.textFill = Color.RED
                         }
@@ -63,6 +64,7 @@ class LoginView(private val casinoClient: CasinoClient) {
                 if (result != "SENT") {
                     loginButton.isDisable = false
                     createUserButton.isDisable = false
+                    adminButton.isDisable = false
                     message.text = "Could not send credentials; reconnect and try again."
                     message.textFill = Color.RED
                 }
@@ -72,13 +74,21 @@ class LoginView(private val casinoClient: CasinoClient) {
         createUserButton.setOnAction {
             stage.scene = Scene(CreateUser(casinoClient).getView(stage), 800.0, 600.0)
         }
+        adminButton.setOnAction {
+            if (!casinoClient.isConnected() && !casinoClient.connect()) {
+                message.text = "Could not connect to server."
+                message.textFill = Color.RED
+            } else {
+                stage.scene = Scene(AdminView(casinoClient).getView(stage), 800.0, 600.0)
+            }
+        }
         quitButton.setOnAction {
             casinoClient.disconnect()
             javafx.application.Platform.exit()
         }
 
         return VBox(10.0, title, usernameLabel, usernameField, passwordLabel,
-            passwordField, loginButton, createUserButton, quitButton, message).apply {
+            passwordField, loginButton, createUserButton, adminButton, quitButton, message).apply {
             alignment = Pos.CENTER
             padding = Insets(30.0)
             style = "-fx-background-color: #123D2B;"

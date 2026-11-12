@@ -40,9 +40,7 @@ class CreateUser(private val casinoClient: CasinoClient) {
                             passwordField.clear()
                             casinoClient.setMessageListener(null)
                             val authenticatedName = casinoClient.authenticatedUsername
-                            if (authenticatedName != null && casinoClient.isAdmin) {
-                                stage.scene = Scene(AdminView(casinoClient).getView(stage), 800.0, 600.0)
-                            } else if (authenticatedName != null) {
+                            if (authenticatedName != null) {
                                 stage.scene = Scene(LobbyView(casinoClient).getView(
                                     authenticatedName, stage), 800.0, 600.0)
                             } else {

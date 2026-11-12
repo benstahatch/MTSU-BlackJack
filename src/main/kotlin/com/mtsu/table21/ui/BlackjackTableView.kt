@@ -15,7 +15,6 @@ import javafx.scene.layout.HBox
 import javafx.scene.layout.Pane
 import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
-import javafx.scene.media.AudioClip
 import javafx.scene.text.Font
 import javafx.scene.text.FontWeight
 import java.util.Base64
@@ -23,7 +22,6 @@ import java.util.Base64
 class BlackjackTableView(
     private val casinoClient: CasinoClient,
     private val userName: String,
-    private val tableNumber: Int = 1,
     private val onQuit: () -> Unit
 ) : StackPane() {
     private data class PlayerSnapshot(
@@ -39,11 +37,6 @@ class BlackjackTableView(
     private var dealerHidden = true
     private var dealerCardsState: List<Card> = emptyList()
     private var playerState: List<PlayerSnapshot> = emptyList()
-    private var previousVisibleCardCount = 0
-    private var receivedFirstState = false
-    private val cardSound: AudioClip? = javaClass.getResource("/sounds/freesound_community-flipcard-91468.mp3")?.toExternalForm()?.let {
-        try { AudioClip(it).apply { volume = 0.35 } } catch (_: Exception) { null }
-    }
 
     private val designContainer = StackPane().apply {
         setMinSize(800.0, 600.0)
@@ -199,11 +192,6 @@ class BlackjackTableView(
         if (result != "SENT") statusLabel.text = result
     }
 
-    /** Allows LobbyView to replay the JOINED/STATE handshake if it arrived during navigation. */
-    internal fun acceptServerMessage(line: String) {
-        handleServerMessage(line)
-    }
-
     private fun handleServerMessage(line: String) {
         when {
             line == "DISCONNECTED" -> statusLabel.text = "Disconnected from server."
@@ -211,18 +199,12 @@ class BlackjackTableView(
                 val parts = line.split('|')
                 myPlayerId = parts.getOrNull(1)
                 mySeat = parts.getOrNull(2)?.toIntOrNull() ?: -1
-                statusLabel.text = "Seated at Table #$tableNumber — Seat ${mySeat + 1}. Enter your bet and press Deal when ready."
+                statusLabel.text = "Joined Table #1. You are Player ${mySeat + 1}. Choose Play This Round and set your bet."
             }
             line.startsWith("ERROR|") -> statusLabel.text = line.substringAfter('|')
             line.startsWith("OK|") -> statusLabel.text = line.substringAfter('|')
             line.startsWith("STATE|") -> parseState(line)
             line == "LEFT" -> statusLabel.text = "You left the table."
-            line.startsWith("KICKED|") -> {
-                statusLabel.text = line.substringAfter('|')
-                casinoClient.sendCommand("LEAVE_TABLE")
-                casinoClient.setMessageListener(null)
-                onQuit()
-            }
         }
     }
 
@@ -243,12 +225,6 @@ class BlackjackTableView(
             } catch (_: Exception) { null }
         }
         playerState.firstOrNull { it.id == myPlayerId }?.let { casinoClient.updatePlayerBalance(it.balance) }
-        val visibleCardCount = dealerCardsState.size + playerState.sumOf { player -> player.hands.sumOf { it.size } }
-        if (receivedFirstState && visibleCardCount > previousVisibleCardCount) {
-            cardSound?.play()
-        }
-        previousVisibleCardCount = visibleCardCount
-        receivedFirstState = true
         updateView()
     }
 
@@ -314,9 +290,9 @@ class BlackjackTableView(
             val active = playerState.firstOrNull { it.id == currentPlayerId }
             statusLabel.text = if (myTurn) "Your turn — Player ${mySeat + 1}" else "${active?.name ?: "Waiting"}'s turn"
         } else if (phase == "DEALER") statusLabel.text = "Settlement pending. Retry payout after the server issue is resolved."
-        else if (betweenRounds && mine?.optedIn == true) statusLabel.text = "You're seated. Enter your wager, then press Deal to start the round."
-        else if (phase == "FINISHED") statusLabel.text = "Round finished. You're seated for the next round; choose Play This Round if you were not already opted in."
-        else if (mine != null) statusLabel.text = "You're seated. You can join the next round when the current round finishes."
+        else if (betweenRounds && mine?.optedIn == true) statusLabel.text = "Enter your wager, then press Deal to bet and start the round."
+        else if (phase == "FINISHED") statusLabel.text = "Round finished. Choose Play This Round to join the next round."
+        else if (mine != null) statusLabel.text = "Choose Play This Round, then set your bet."
     }
 
     private fun createSmallCard(card: Card): StackPane = createCard(card).apply {

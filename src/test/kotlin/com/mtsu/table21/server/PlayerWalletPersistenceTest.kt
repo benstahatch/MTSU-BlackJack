@@ -23,11 +23,25 @@ internal class MemoryWallets : WalletRepository() {
     }
 }
 
+internal class MemoryLeaderboard : com.mtsu.table21.database.LeaderboardRepository() {
+    val hands = mutableListOf<HandResult>()
+    val rounds = mutableListOf<String>()
+    var bankrupt = false
+    var fail = false
+    override fun completePlayer(userId: Long, roundId: String, results: List<HandResult>): Boolean {
+        check(!fail)
+        hands.addAll(results)
+        rounds.add(roundId)
+        return bankrupt
+    }
+}
+
 class PlayerWalletPersistenceTest {
     private class House : HouseWalletRepository() {
+        var rejectPayouts = false
         var balanceValue = BigDecimal("100000.00")
         override fun addChips(amount: BigDecimal): Boolean { balanceValue += amount; return true }
-        override fun removeChips(amount: BigDecimal): Boolean { balanceValue -= amount; return true }
+        override fun removeChips(amount: BigDecimal): Boolean { if (rejectPayouts) return false; balanceValue -= amount; return true }
     }
     private fun shoe(vararg ranks: Card.Rank) = object : Shoe(6) {
         val cards = ranks.toMutableList()
@@ -43,7 +57,7 @@ class PlayerWalletPersistenceTest {
     @Test fun selectingBetLeavesBalanceUnchangedUntilDealBroadcastsDeduction() {
         val wallets = MemoryWallets()
         val house = House()
-        val manager = TableSessionManager(house, wallets, shoe(TEN, TEN, SIX, NINE))
+        val manager = TableSessionManager(house, wallets, shoe(TEN, TEN, SIX, NINE), MemoryLeaderboard())
         var state = ""
         val id = manager.joinTable(1, "alice") { if (it.startsWith("STATE|")) state = it }
         fun displayedBalance(): Double {
@@ -66,7 +80,7 @@ class PlayerWalletPersistenceTest {
         wallets.balances[1] = BigDecimal("970.00")
         val house = House()
         val manager = TableSessionManager(house, wallets,
-            shoe(TEN, TEN, SIX, NINE, TEN, TEN, SIX, NINE))
+            shoe(TEN, TEN, SIX, NINE, TEN, TEN, SIX, NINE), MemoryLeaderboard())
         var state = ""
         val id = manager.joinTable(1, "alice") { if (it.startsWith("STATE|")) state = it }
         manager.handle(id, "OPT_IN")
@@ -94,7 +108,7 @@ class PlayerWalletPersistenceTest {
     @Test fun savedBalanceRejoinAndIndependentUsers() {
         val wallets = MemoryWallets()
         wallets.balances[1] = BigDecimal("1020.00")
-        val manager = TableSessionManager(House(), wallets)
+        val manager = TableSessionManager(House(), wallets, leaderboard = MemoryLeaderboard())
         val messages = mutableListOf<String>()
         val first = manager.joinTable(1, "alice", messages::add)
         assertTrue(messages.first().endsWith("|1020.0"))
@@ -117,7 +131,8 @@ class PlayerWalletPersistenceTest {
         ).forEach { (cards, expected) ->
             val wallets = MemoryWallets()
             val house = House()
-            val manager = TableSessionManager(house, wallets, shoe(*cards.toTypedArray()))
+            val scores = MemoryLeaderboard()
+            val manager = TableSessionManager(house, wallets, shoe(*cards.toTypedArray()), scores)
             val id = manager.joinTable(1, "alice") {}
             start(manager, id)
             if (cards.first() != ACE) {
@@ -125,6 +140,17 @@ class PlayerWalletPersistenceTest {
                 assertTrue(manager.handle(id, "STAND").startsWith("OK|"))
             }
             assertEquals(BigDecimal(expected), wallets.balances[1])
+            val recorded = scores.hands.single()
+            assertEquals(BigDecimal("10.00"), recorded.wager())
+            assertEquals(BigDecimal(expected).subtract(BigDecimal("990.00")), recorded.payout())
+            assertEquals(when (expected) {
+                "990.00" -> "DEALER_WIN"
+                "1000.00" -> "PUSH"
+                else -> "PLAYER_WIN"
+            }, recorded.result())
+            assertFalse(recorded.split())
+            assertFalse(recorded.doubled())
+            assertEquals(36, scores.rounds.single().length)
             assertEquals(BigDecimal("101000.00"), wallets.balances.getValue(1) + house.balanceValue)
             assertEquals(BigDecimal("950.00"), wallets.balances[2])
             manager.leaveTable(id)
@@ -137,7 +163,8 @@ class PlayerWalletPersistenceTest {
     @Test fun doubleAndSplitPersistAdditionalWagers() {
         val wallets = MemoryWallets()
         val house = House()
-        val manager = TableSessionManager(house, wallets, shoe(EIGHT, TEN, EIGHT, SEVEN, THREE, TWO, TEN))
+        val scores = MemoryLeaderboard()
+        val manager = TableSessionManager(house, wallets, shoe(EIGHT, TEN, EIGHT, SEVEN, THREE, TWO, TEN), scores)
         val id = manager.joinTable(1, "alice") {}
         start(manager, id)
         assertTrue(manager.handle(id, "SPLIT").startsWith("OK|"))
@@ -147,12 +174,18 @@ class PlayerWalletPersistenceTest {
         assertTrue(manager.handle(id, "STAND").startsWith("OK|"))
         assertEquals(BigDecimal("1010.00"), wallets.balances[1])
         assertEquals(BigDecimal("99990.00"), house.balanceValue)
+        assertEquals(listOf(0, 1), scores.hands.map { it.handIndex() })
+        assertEquals(listOf(BigDecimal("20.00"), BigDecimal("10.00")), scores.hands.map { it.wager() })
+        assertTrue(scores.hands.all { it.split() })
+        assertTrue(scores.hands[0].doubled())
+        assertFalse(scores.hands[1].doubled())
+        assertEquals(1, scores.rounds.size)
     }
 
     @Test fun failedPersistenceHaltsTableWithoutRepeatingTransfers() {
         val wallets = MemoryWallets()
         val house = House()
-        val manager = TableSessionManager(house, wallets)
+        val manager = TableSessionManager(house, wallets, leaderboard = MemoryLeaderboard())
         val id = manager.joinTable(1, "alice") {}
         manager.handle(id, "OPT_IN")
         manager.handle(id, "PLACE_BET", "10")
@@ -167,7 +200,7 @@ class PlayerWalletPersistenceTest {
 
     @Test fun disconnectDuringRoundSettlesAndRejoinLoadsSavedBalance() {
         val wallets = MemoryWallets()
-        val manager = TableSessionManager(House(), wallets, shoe(TEN, TEN, KING, EIGHT))
+        val manager = TableSessionManager(House(), wallets, shoe(TEN, TEN, KING, EIGHT), MemoryLeaderboard())
         val id = manager.joinTable(1, "alice") {}
         start(manager, id)
         manager.leaveTable(id)
@@ -181,7 +214,7 @@ class PlayerWalletPersistenceTest {
     @Test fun failedPayoutWriteCannotPayTwice() {
         val wallets = MemoryWallets()
         val house = House()
-        val manager = TableSessionManager(house, wallets, shoe(TEN, TEN, KING, EIGHT))
+        val manager = TableSessionManager(house, wallets, shoe(TEN, TEN, KING, EIGHT), MemoryLeaderboard())
         val id = manager.joinTable(1, "alice") {}
         start(manager, id)
         wallets.fail = true
@@ -192,10 +225,57 @@ class PlayerWalletPersistenceTest {
         assertEquals(BigDecimal("99990.00"), house.balanceValue)
     }
 
+    @Test fun bankruptcyNotifiesAndRemovesPlayerOnlyAfterSettlement() {
+        val wallets = MemoryWallets()
+        wallets.balances[1] = BigDecimal("10.00")
+        val scores = MemoryLeaderboard().apply { bankrupt = true }
+        val messages = mutableListOf<String>()
+        val manager = TableSessionManager(House(), wallets, shoe(TEN, TEN, SIX, NINE), scores)
+        val id = manager.joinTable(1, "alice", messages::add)
+        start(manager, id)
+        assertFalse(messages.any { it.startsWith("BANKRUPT|") })
+        manager.handle(id, "STAND")
+        assertEquals("DEALER_WIN", scores.hands.single().result())
+        assertEquals(1, messages.count { it.startsWith("BANKRUPT|") })
+        assertEquals("ERROR|Join a table first", manager.handle(id, "OPT_IN"))
+    }
+
+    @Test fun historyFailureHaltsWithoutDuplicatePayout() {
+        val wallets = MemoryWallets()
+        val house = House()
+        val scores = MemoryLeaderboard().apply { fail = true }
+        val manager = TableSessionManager(house, wallets, shoe(TEN, TEN, KING, EIGHT), scores)
+        val id = manager.joinTable(1, "alice") {}
+        start(manager, id)
+        assertTrue(manager.handle(id, "STAND").contains("history/score persistence failed"))
+        scores.fail = false
+        assertTrue(manager.handle(id, "START_ROUND").startsWith("ERROR|"))
+        assertEquals(BigDecimal("1010.00"), wallets.balances[1])
+        assertEquals(BigDecimal("99990.00"), house.balanceValue)
+    }
+
+    @Test fun settlementRetryRecordsHandsAndPaysOnlyOnce() {
+        val wallets = MemoryWallets()
+        val house = House().apply { rejectPayouts = true }
+        val scores = MemoryLeaderboard()
+        val manager = TableSessionManager(house, wallets, shoe(TEN, TEN, KING, EIGHT), scores)
+        val id = manager.joinTable(1, "alice") {}
+        start(manager, id)
+        assertTrue(manager.handle(id, "STAND").startsWith("ERROR|"))
+        assertTrue(scores.hands.isEmpty())
+        house.rejectPayouts = false
+        assertTrue(manager.handle(id, "START_ROUND").startsWith("OK|"))
+        assertEquals(1, scores.hands.size)
+        assertEquals(BigDecimal("1010.00"), wallets.balances[1])
+        assertTrue(manager.handle(id, "START_ROUND").startsWith("ERROR|"))
+        assertEquals(1, scores.hands.size)
+        assertEquals(BigDecimal("1010.00"), wallets.balances[1])
+    }
+
     @Test fun zeroBalanceCanJoinButCannotBetAndMissingWalletFails() {
         val wallets = MemoryWallets()
         wallets.balances[1] = BigDecimal("0.00")
-        val manager = TableSessionManager(House(), wallets)
+        val manager = TableSessionManager(House(), wallets, leaderboard = MemoryLeaderboard())
         val id = manager.joinTable(1, "alice") {}
         assertFalse(id.startsWith("ERROR|"))
         assertTrue(manager.handle(id, "PLACE_BET", "1").startsWith("ERROR|"))

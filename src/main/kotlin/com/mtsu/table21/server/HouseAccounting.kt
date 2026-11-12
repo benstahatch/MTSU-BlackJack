@@ -24,15 +24,7 @@ internal class HouseAccounting(private val repository: HouseWalletRepository) {
 
     fun settle(payouts: List<Payout>) {
         val credits = payouts.map { payout ->
-            val credit = Wallet(0.0)
-            val bet = Bet(payout.wager)
-            when (payout.outcome) {
-                Outcome.LOSS -> Unit
-                Outcome.PUSH -> betting.refundPush(credit, bet)
-                Outcome.WIN -> betting.payWin(credit, bet)
-                Outcome.BLACKJACK -> betting.payBlackjack(credit, bet)
-            }
-            payout.wallet to BigDecimal.valueOf(credit.balance).setScale(2, RoundingMode.HALF_UP)
+            payout.wallet to payoutAmount(payout)
         }
         val total = credits.fold(BigDecimal.ZERO) { sum, credit -> sum + credit.second }
         if (total.signum() > 0) {
@@ -40,4 +32,16 @@ internal class HouseAccounting(private val repository: HouseWalletRepository) {
         }
         credits.filter { it.second.signum() > 0 }.forEach { (wallet, amount) -> wallet.addChips(amount.toDouble()) }
     }
+    fun payoutAmount(payout: Payout): BigDecimal {
+        val credit = Wallet(0.0)
+        val bet = Bet(payout.wager)
+        when (payout.outcome) {
+            Outcome.LOSS -> Unit
+            Outcome.PUSH -> betting.refundPush(credit, bet)
+            Outcome.WIN -> betting.payWin(credit, bet)
+            Outcome.BLACKJACK -> betting.payBlackjack(credit, bet)
+        }
+        return BigDecimal.valueOf(credit.balance).setScale(2, RoundingMode.HALF_UP)
+    }
+
 }

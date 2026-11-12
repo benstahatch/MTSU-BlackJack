@@ -90,7 +90,7 @@ class HouseAccountingTest {
     @Test
     fun sharedTableTransfersWagersAndSettlementsWithoutBroadcastingHouseBalance() {
         val house = House()
-        val manager = TableSessionManager(house, MemoryWallets())
+        val manager = TableSessionManager(house, MemoryWallets(), leaderboard = MemoryLeaderboard())
         var state = ""
         val id = manager.joinTable(1, "player") { if (it.startsWith("STATE|")) state = it }
         fun playerBalance(): Double {

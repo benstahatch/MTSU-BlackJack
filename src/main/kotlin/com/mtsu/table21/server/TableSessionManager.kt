@@ -15,8 +15,20 @@ import java.util.UUID
 class TableSessionManager(
     private val houseWallet: HouseWalletRepository = HouseWalletRepository(),
     private val wallets: com.mtsu.table21.database.WalletRepository = com.mtsu.table21.database.WalletRepository(),
-    private val shoe: Shoe = Shoe(6)
+    private val shoe: Shoe = Shoe(6),
+    private val leaderboard: com.mtsu.table21.database.LeaderboardRepository = com.mtsu.table21.database.LeaderboardRepository()
 ) {
+    companion object {
+        const val BANKRUPT_MESSAGE = "BANKRUPT|Your run is over. Your high score has been saved. Create a new account for a fresh $1,000 and try to beat the house again."
+    }
+
+    fun leaderboardResponse(): String = try {
+        "LEADERBOARD|" + leaderboard.top20().mapIndexed { index, entry ->
+            listOf((index + 1).toString(), encode(entry.username()), entry.peakBalance().toPlainString(),
+                entry.peakProfit().toPlainString(), entry.wins().toString()).joinToString("~")
+        }.joinToString(",")
+    } catch (_: Exception) { "ERROR|Leaderboard unavailable" }
+
     private data class ServerPlayer(
         val userId: Long,
         val id: String,
@@ -41,64 +53,17 @@ class TableSessionManager(
     // Retained for the original TableSessionManager unit tests and older callers.
     private val legacyTables = mutableMapOf<String, MutableSet<String>>()
     private var persistenceFailed = false
+    private var roundId = ""
     private var roundNumber = 0
     private var phase = "WAITING" // WAITING, PLAYERS, DEALER, FINISHED, ERROR
     private var currentSeat = -1
     private var dealerHidden = true
-    private var tableOpen = true
 
     @Synchronized
     fun houseBalance(): String = try {
         "HOUSE_BALANCE|${houseWallet.getBalance().toPlainString()}"
     } catch (_: Exception) {
         "ERROR|House balance unavailable"
-    }
-
-    @Synchronized
-    fun adminStatus(): String = listOf(
-        "ADMIN_STATUS", roundNumber.toString(), phase, currentSeat.toString(),
-        dealer.hand.cardCount.toString(), players.count { it != null }.toString(),
-        tableOpen.toString(), persistenceFailed.toString()
-    ).joinToString("|")
-
-    /** True only when no player is seated and the table is between rounds. */
-    @Synchronized
-    fun isEmptyForCleanup(): Boolean =
-        players.all { it == null } && (phase == "WAITING" || phase == "FINISHED")
-
-    @Synchronized
-    fun adminPlayers(): String {
-        val records = players.filterNotNull().joinToString(",") { p ->
-            val fields = listOf(
-                encode(p.player.name), p.seat.toString(), p.wallet.balance.toString(),
-                p.bet.toString(), p.connected.toString(), p.result.ifBlank { "Waiting" }
-            ).joinToString("~")
-            encode(fields)
-        }
-        return "ADMIN_PLAYERS|$records"
-    }
-
-    @Synchronized
-    fun setTableOpen(open: Boolean): String {
-        if (phase == "PLAYERS" || phase == "DEALER") {
-            return "ERROR|The table can only be opened or closed between rounds"
-        }
-        tableOpen = open
-        return "ADMIN_TABLE|${if (tableOpen) "OPEN" else "CLOSED"}"
-    }
-
-    @Synchronized
-    fun kickPlayer(username: String): String {
-        if (phase == "PLAYERS" || phase == "DEALER") {
-            return "ERROR|Players cannot be removed during an active round"
-        }
-        val target = players.filterNotNull().firstOrNull { it.player.name.equals(username, ignoreCase = true) }
-            ?: return "ERROR|Player is not currently at the table"
-        try { writers.remove(target.id)?.invoke("KICKED|An administrator removed you from the table") }
-        catch (_: Exception) { writers.remove(target.id) }
-        players[target.seat] = null
-        broadcastState()
-        return "ADMIN_KICKED|${target.player.name}"
     }
 
     @Synchronized
@@ -117,7 +82,6 @@ class TableSessionManager(
 
     @Synchronized
     fun joinTable(userId: Long, username: String, send: (String) -> Unit): String {
-        if (!tableOpen) return "ERROR|Table is currently closed by an administrator"
         if (persistenceFailed) return "ERROR|Table halted: wallet persistence failed; contact server operator"
         val cleanName = username
         if (cleanName.isBlank()) return "ERROR|Username cannot be empty"
@@ -129,23 +93,13 @@ class TableSessionManager(
         val wallet = try {
             wallets.findByUserId(userId).orElseThrow { IllegalStateException("Missing wallet") }
         } catch (_: Exception) { return "ERROR|Player wallet unavailable" }
-        // Players joining between rounds are automatically seated and opted in.
-        // A player joining during an active round is seated for the next round.
-        val autoOptIn = phase == "WAITING" || phase == "FINISHED"
-        val record = ServerPlayer(
-            userId, id, seat, Player(cleanName), wallet,
-            optedIn = autoOptIn,
-            result = if (autoOptIn) "Ready" else "Waiting for next round"
-        )
+        val record = ServerPlayer(userId, id, seat, Player(cleanName), wallet)
         players[seat] = record
         writers[id] = send
         send("JOINED|$id|$seat|${record.wallet.balance}")
         broadcastState()
         return id
     }
-
-    @Synchronized
-    fun userIdForPlayer(playerId: String): Long? = findPlayer(playerId)?.userId
 
     @Synchronized
     fun leaveTable(playerId: String) {
@@ -172,10 +126,6 @@ class TableSessionManager(
         return try {
             check(!persistenceFailed) { "Table halted: wallet persistence failed; contact server operator" }
             when (command) {
-                "REQUEST_STATE" -> {
-                    broadcastState()
-                    "OK|Table state refreshed"
-                }
                 "OPT_IN" -> {
                     requireWaiting("You can only opt in between rounds")
                     if (!p.optedIn) {
@@ -240,10 +190,8 @@ class TableSessionManager(
             return
         }
         require(phase == "WAITING" || phase == "FINISHED") { "The current round is not finished" }
-        // An opted-in player is eligible only after entering a valid wager.
-        // This prevents a newly seated player with no bet from blocking everyone else.
-        val active = players.filterNotNull().filter { it.connected && it.optedIn && it.bet > 0.0 }
-        require(active.isNotEmpty()) { "At least one seated player must place a bet before the round can start" }
+        val active = players.filterNotNull().filter { it.connected && it.optedIn }
+        require(active.isNotEmpty()) { "At least one player must choose Play This Round" }
         active.forEach {
             require(it.bet > 0.0) { "${it.player.name} must place a bet" }
             require(it.wallet.canAfford(it.bet)) { "${it.player.name} cannot afford the bet" }
@@ -254,6 +202,7 @@ class TableSessionManager(
         dealer.resetHand()
         dealerHidden = true
         roundNumber++
+        roundId = UUID.randomUUID().toString()
         phase = "PLAYERS"
         currentSeat = -1
         players.filterNotNull().forEach { p ->
@@ -263,9 +212,8 @@ class TableSessionManager(
             p.doneHands.clear()
             p.handIndex = 0
             p.splitUsed = false
-            val isPlayingThisRound = p in active
-            p.result = if (isPlayingThisRound) "Playing" else "Sitting out"
-            if (isPlayingThisRound) {
+            p.result = if (p.optedIn) "Playing" else "Sitting out"
+            if (p.optedIn) {
                 p.handBets.add(p.bet)
             }
         }
@@ -361,6 +309,7 @@ class TableSessionManager(
         dealerHidden = false
         while (BlackjackRules.shouldDealerHit(dealer.hand)) dealer.addCard(drawCard())
         val payouts = mutableListOf<HouseAccounting.Payout>()
+        val history = mutableMapOf<Long, MutableList<com.mtsu.table21.database.LeaderboardRepository.HandResult>>()
         players.filterNotNull().filter { it.optedIn }.forEach { p ->
             var anyWin = false
             p.player.hands.forEachIndexed { index, hand ->
@@ -392,12 +341,30 @@ class TableSessionManager(
                     BlackjackRules.Result.PUSH -> HouseAccounting.Outcome.PUSH
                     BlackjackRules.Result.DEALER_WIN -> HouseAccounting.Outcome.LOSS
                 }
-                payouts.add(HouseAccounting.Payout(p.wallet, wager, outcome))
+                val payout = HouseAccounting.Payout(p.wallet, wager, outcome)
+                payouts.add(payout)
+                history.getOrPut(p.userId) { mutableListOf() }.add(
+                    com.mtsu.table21.database.LeaderboardRepository.HandResult(index, result.name,
+                        java.math.BigDecimal.valueOf(wager).setScale(2, java.math.RoundingMode.HALF_UP),
+                        accounting.payoutAmount(payout), p.splitUsed, p.doubledHands.contains(index)))
             }
             p.result = if (anyWin) "Round complete - win" else "Round complete"
         }
         accounting.settle(payouts)
         persist(players.filterNotNull().filter { it.optedIn })
+        try {
+            players.filterNotNull().filter { it.optedIn }.forEach { p ->
+                if (leaderboard.completePlayer(p.userId, roundId, history.getValue(p.userId))) {
+                    val send = writers.remove(p.id)
+                    players[p.seat] = null
+                    try { send?.invoke(BANKRUPT_MESSAGE) } catch (_: Exception) { }
+                }
+            }
+        } catch (_: Exception) {
+            persistenceFailed = true
+            phase = "ERROR"
+            throw IllegalStateException("Table halted: history/score persistence failed; contact server operator")
+        }
         phase = "FINISHED"
         currentSeat = -1
         players.filterNotNull().forEach {
