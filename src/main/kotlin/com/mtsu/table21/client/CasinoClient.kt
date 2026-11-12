@@ -1,70 +1,150 @@
 package com.mtsu.table21.client
 
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
 
+/** TCP client. One background thread reads server broadcasts; UI code never blocks waiting for a reply. */
 class CasinoClient(
-    private val host: String = "127.0.0.1",
-    private val port: Int = 5555
+    private val host: String = serverHost(System.getenv()),
+    private val port: Int = serverPort(System.getenv())
 ) {
+    companion object {
+        internal fun serverHost(environment: Map<String, String>): String =
+            environment["TABLE21_SERVER_HOST"]?.trim()?.takeIf { it.isNotEmpty() } ?: "127.0.0.1"
 
-    private var socket: Socket? = null
+        internal fun serverPort(environment: Map<String, String>): Int =
+            environment["TABLE21_SERVER_PORT"]?.toIntOrNull()?.takeIf { it in 1..65535 } ?: 5555
+    }
 
-    private var input: java.io.BufferedReader? = null
-    private var output: java.io.BufferedWriter? = null
+    @Volatile var authenticatedUserId: Long? = null
+        private set
+    @Volatile var authenticatedUsername: String? = null
+        private set
+    private var sessionPlayerId: String? = null
 
+    fun login(username: String, password: String) = authenticate("LOGIN", username, password)
+    fun register(username: String, password: String) = authenticate("REGISTER", username, password)
+    private fun authenticate(command: String, username: String, password: String): String {
+        fun encode(value: String) = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(value.toByteArray(Charsets.UTF_8))
+        return sendCommand("$command|${encode(username)}|${encode(password)}")
+    }
 
+    private fun clearSession() {
+        authenticatedUserId = null
+        authenticatedUsername = null
+        playerBalance = null
+        sessionPlayerId = null
+    }
+
+    @Volatile var playerBalance: Double? = null
+        private set
+
+    fun updatePlayerBalance(balance: Double) {
+        if (balance.isFinite() && balance >= 0) playerBalance = balance
+    }
+
+    @Volatile private var socket: Socket? = null
+    @Volatile private var input: BufferedReader? = null
+    @Volatile private var output: BufferedWriter? = null
+    @Volatile private var listener: ((String) -> Unit)? = null
+    private val connected = AtomicBoolean(false)
+    private val writeLock = Any()
+
+    fun setMessageListener(callback: ((String) -> Unit)?) {
+        listener = callback
+    }
+
+    @Synchronized
     fun connect(): Boolean {
-
-        if (socket?.isConnected == true) {
-            return true
-        }
-
+        if (connected.get() && socket?.isClosed == false) return true
         return try {
-
-            socket = Socket(host, port)
-
-            input =
-                socket!!
-                    .getInputStream()
-                    .bufferedReader()
-
-            output =
-                socket!!
-                    .getOutputStream()
-                    .bufferedWriter()
-
-            // Server sends CONNECTED immediately
-            val response = input!!.readLine()
-
-            response == "CONNECTED"
-
-        } catch (e: Exception) {
-
+            val newSocket = Socket()
+            newSocket.connect(InetSocketAddress(host, port), 4000)
+            newSocket.tcpNoDelay = true
+            val newInput = newSocket.getInputStream().bufferedReader(Charsets.UTF_8)
+            val newOutput = newSocket.getOutputStream().bufferedWriter(Charsets.UTF_8)
+            val greeting = newInput.readLine()
+            if (greeting != "CONNECTED") {
+                newSocket.close()
+                false
+            } else {
+                socket = newSocket
+                input = newInput
+                output = newOutput
+                connected.set(true)
+                Thread({ readLoop(newInput, newSocket) }, "Table21-client-reader").apply {
+                    isDaemon = true
+                    start()
+                }
+                true
+            }
+        } catch (_: Exception) {
+            disconnect()
             false
         }
     }
 
-
-    fun sendCommand(command: String): String {
-
-        val writer =
-            output ?: return "NOT CONNECTED"
-
-        val reader =
-            input ?: return "NOT CONNECTED"
-
-        writer.write("$command\n")
-        writer.flush()
-
-        return reader.readLine()
-            ?: "NO RESPONSE"
+    private fun readLoop(reader: BufferedReader, connection: Socket) {
+        try {
+            while (connected.get() && socket === connection) {
+                val line = reader.readLine() ?: break
+                if (line.startsWith("AUTH_OK|")) {
+                    val fields = line.split('|')
+                    authenticatedUserId = fields[1].toLong()
+                    authenticatedUsername = String(java.util.Base64.getUrlDecoder().decode(fields[2]), Charsets.UTF_8)
+                    updatePlayerBalance(fields[3].toDouble())
+                }
+                if (line.startsWith("STATE|")) {
+                    line.split('|').getOrNull(6)?.split(',')?.filter { it.isNotEmpty() }?.forEach {
+                        val fields = String(java.util.Base64.getUrlDecoder().decode(it), Charsets.UTF_8).split('~')
+                        if (fields[0] == sessionPlayerId) updatePlayerBalance(fields[3].toDouble())
+                    }
+                }
+                if (line.startsWith("JOINED|")) {
+                    sessionPlayerId = line.split('|')[1]
+                    line.split('|').getOrNull(3)?.toDoubleOrNull()?.let(::updatePlayerBalance)
+                }
+                listener?.invoke(line)
+            }
+        } catch (_: Exception) {
+            // A closed socket ends the reader loop.
+        } finally {
+            synchronized(this) {
+                if (socket === connection) {
+                    disconnect()
+                    listener?.invoke("DISCONNECTED")
+                }
+            }
+        }
     }
 
+    /** Sends one protocol line. Replies and state changes arrive through setMessageListener. */
+    fun sendCommand(command: String): String {
+        val writer = output ?: return "NOT CONNECTED"
+        if (!connected.get()) return "NOT CONNECTED"
+        return try {
+            synchronized(writeLock) {
+                writer.write(command.replace("\n", "").replace("\r", ""))
+                writer.newLine()
+                writer.flush()
+            }
+            "SENT"
+        } catch (e: Exception) {
+            "SEND FAILED: ${e.message ?: "connection error"}"
+        }
+    }
 
+    fun isConnected(): Boolean = connected.get() && socket?.isClosed == false
+
+    @Synchronized
     fun disconnect() {
-
-        socket?.close()
-
+        connected.set(false)
+        clearSession()
+        try { socket?.close() } catch (_: Exception) { }
         socket = null
         input = null
         output = null
