@@ -15,8 +15,20 @@ import java.util.UUID
 class TableSessionManager(
     private val houseWallet: HouseWalletRepository = HouseWalletRepository(),
     private val wallets: com.mtsu.table21.database.WalletRepository = com.mtsu.table21.database.WalletRepository(),
-    private val shoe: Shoe = Shoe(6)
+    private val shoe: Shoe = Shoe(6),
+    private val leaderboard: com.mtsu.table21.database.LeaderboardRepository = com.mtsu.table21.database.LeaderboardRepository()
 ) {
+    companion object {
+        const val BANKRUPT_MESSAGE = "BANKRUPT|Your run is over. Your high score has been saved. Create a new account for a fresh $1,000 and try to beat the house again."
+    }
+
+    fun leaderboardResponse(): String = try {
+        "LEADERBOARD|" + leaderboard.top20().mapIndexed { index, entry ->
+            listOf((index + 1).toString(), encode(entry.username()), entry.peakBalance().toPlainString(),
+                entry.peakProfit().toPlainString(), entry.wins().toString()).joinToString("~")
+        }.joinToString(",")
+    } catch (_: Exception) { "ERROR|Leaderboard unavailable" }
+
     private data class ServerPlayer(
         val userId: Long,
         val id: String,
@@ -41,6 +53,7 @@ class TableSessionManager(
     // Retained for the original TableSessionManager unit tests and older callers.
     private val legacyTables = mutableMapOf<String, MutableSet<String>>()
     private var persistenceFailed = false
+    private var roundId = ""
     private var roundNumber = 0
     private var phase = "WAITING" // WAITING, PLAYERS, DEALER, FINISHED, ERROR
     private var currentSeat = -1
@@ -189,6 +202,7 @@ class TableSessionManager(
         dealer.resetHand()
         dealerHidden = true
         roundNumber++
+        roundId = UUID.randomUUID().toString()
         phase = "PLAYERS"
         currentSeat = -1
         players.filterNotNull().forEach { p ->
@@ -295,6 +309,7 @@ class TableSessionManager(
         dealerHidden = false
         while (BlackjackRules.shouldDealerHit(dealer.hand)) dealer.addCard(drawCard())
         val payouts = mutableListOf<HouseAccounting.Payout>()
+        val history = mutableMapOf<Long, MutableList<com.mtsu.table21.database.LeaderboardRepository.HandResult>>()
         players.filterNotNull().filter { it.optedIn }.forEach { p ->
             var anyWin = false
             p.player.hands.forEachIndexed { index, hand ->
@@ -326,12 +341,30 @@ class TableSessionManager(
                     BlackjackRules.Result.PUSH -> HouseAccounting.Outcome.PUSH
                     BlackjackRules.Result.DEALER_WIN -> HouseAccounting.Outcome.LOSS
                 }
-                payouts.add(HouseAccounting.Payout(p.wallet, wager, outcome))
+                val payout = HouseAccounting.Payout(p.wallet, wager, outcome)
+                payouts.add(payout)
+                history.getOrPut(p.userId) { mutableListOf() }.add(
+                    com.mtsu.table21.database.LeaderboardRepository.HandResult(index, result.name,
+                        java.math.BigDecimal.valueOf(wager).setScale(2, java.math.RoundingMode.HALF_UP),
+                        accounting.payoutAmount(payout), p.splitUsed, p.doubledHands.contains(index)))
             }
             p.result = if (anyWin) "Round complete - win" else "Round complete"
         }
         accounting.settle(payouts)
         persist(players.filterNotNull().filter { it.optedIn })
+        try {
+            players.filterNotNull().filter { it.optedIn }.forEach { p ->
+                if (leaderboard.completePlayer(p.userId, roundId, history.getValue(p.userId))) {
+                    val send = writers.remove(p.id)
+                    players[p.seat] = null
+                    try { send?.invoke(BANKRUPT_MESSAGE) } catch (_: Exception) { }
+                }
+            }
+        } catch (_: Exception) {
+            persistenceFailed = true
+            phase = "ERROR"
+            throw IllegalStateException("Table halted: history/score persistence failed; contact server operator")
+        }
         phase = "FINISHED"
         currentSeat = -1
         players.filterNotNull().forEach {

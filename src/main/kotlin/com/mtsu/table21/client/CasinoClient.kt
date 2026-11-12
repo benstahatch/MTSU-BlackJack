@@ -54,6 +54,9 @@ class CasinoClient(
     private val connected = AtomicBoolean(false)
     private val writeLock = Any()
 
+    @Volatile private var bankruptcyListener: (() -> Unit)? = null
+    fun setBankruptcyListener(callback: (() -> Unit)?) { bankruptcyListener = callback }
+
     fun setMessageListener(callback: ((String) -> Unit)?) {
         listener = callback
     }
@@ -92,6 +95,12 @@ class CasinoClient(
         try {
             while (connected.get() && socket === connection) {
                 val line = reader.readLine() ?: break
+                if (line.startsWith("BANKRUPT|")) {
+                    clearSession()
+                    bankruptcyListener?.invoke()
+                    listener?.invoke(line)
+                    break
+                }
                 if (line.startsWith("AUTH_OK|")) {
                     val fields = line.split('|')
                     authenticatedUserId = fields[1].toLong()

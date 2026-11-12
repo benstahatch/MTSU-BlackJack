@@ -46,3 +46,20 @@ What needs to be done next:
 Merge the integration branch into main, test multiple clients at the same table,
 verify multiplayer across separate computers, and continue connecting
 persistent player wallets and game history to the multiplayer server.
+
+## November 11 - 2 hours
+
+I worked mainly on connecting the networking, database, and betting systems
+together. I merged the integration branch into main and tested multiple clients
+at the same Blackjack table to verify that players could connect,
+take turns, place bets, and share the same server/game state.
+
+I also connected player accounts to persistent MySQL wallets so balances
+are saved after wins and losses are restored when the user logs back in.
+I tested multiple accounts to make sure a player keeps their own balance
+and accounts information.
+
+What needs to be done next:
+Continue testing multiplayer across separate computers, add the player
+leaderboard and game history features, and improve Admin stats
+and authorization.
