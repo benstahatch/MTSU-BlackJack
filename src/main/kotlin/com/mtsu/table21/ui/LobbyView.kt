@@ -16,6 +16,19 @@ import javafx.stage.Stage
 
 class LobbyView(private val casinoClient: CasinoClient) {
     fun getView(userName: String, stage: Stage): VBox {
+        casinoClient.setBankruptcyListener {
+            javafx.application.Platform.runLater {
+                casinoClient.setMessageListener(null)
+                casinoClient.disconnect()
+                javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION).apply {
+                    initOwner(stage)
+                    title = "Run complete"
+                    headerText = "You went broke!"
+                    contentText = "Your high score has been saved. Create a new account for a free $1,000 and try to beat the house again."
+                }.showAndWait()
+                stage.scene = Scene(LoginView(casinoClient).getView(stage), 800.0, 600.0)
+            }
+        }
         val title = Label("Welcome to Table21")
         val username = Label("Welcome, $userName")
         val chips = Label(casinoClient.playerBalance?.let { "Balance: ${java.text.NumberFormat.getCurrencyInstance(java.util.Locale.US).format(it)}" }
@@ -26,6 +39,7 @@ class LobbyView(private val casinoClient: CasinoClient) {
         val join = Button("Join Table")
         val create = Button("Create Table")
         val logout = Button("Logout")
+        val leaderboard = Button("Leaderboard")
 
         title.font = Font.font("Arial", 32.0)
         title.textFill = Color.GOLD
@@ -48,7 +62,7 @@ class LobbyView(private val casinoClient: CasinoClient) {
             -fx-background-radius: 8px;
             -fx-cursor: hand;
         """.trimIndent()
-        listOf(join, create, logout).forEach {
+        listOf(join, create, leaderboard, logout).forEach {
             it.style = buttonStyle
             it.prefWidth = 200.0
             it.prefHeight = 40.0
@@ -70,13 +84,18 @@ class LobbyView(private val casinoClient: CasinoClient) {
 
         join.setOnAction { enterTable() }
         create.setOnAction { enterTable() }
+        leaderboard.setOnAction {
+            stage.scene = Scene(LeaderboardView(casinoClient).getView {
+                stage.scene = Scene(getView(userName, stage), 800.0, 600.0)
+            }, 800.0, 600.0)
+        }
         logout.setOnAction {
             casinoClient.disconnect()
             stage.scene = Scene(LoginView(CasinoClient()).getView(stage), 800.0, 600.0)
         }
 
         val top = HBox(25.0, username, chips).apply { alignment = Pos.CENTER }
-        val buttons = VBox(12.0, join, create, logout).apply { alignment = Pos.CENTER }
+        val buttons = VBox(12.0, join, create, leaderboard, logout).apply { alignment = Pos.CENTER }
         val spacer1 = Region().also { VBox.setVgrow(it, Priority.ALWAYS) }
         val spacer2 = Region().also { VBox.setVgrow(it, Priority.ALWAYS) }
         return VBox(18.0, title, top, spacer1, tables, tableDescription, buttons, status, spacer2).apply {

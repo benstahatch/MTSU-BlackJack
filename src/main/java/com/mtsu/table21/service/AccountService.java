@@ -78,6 +78,13 @@ public class AccountService {
                     statement.executeUpdate();
                 }
 
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO leaderboard (user_id, username, peak_balance) VALUES (?, ?, 1000.00)")) {
+                    statement.setLong(1, userId);
+                    statement.setString(2, username);
+                    statement.executeUpdate();
+                }
+
                 User user;
 
                 String selectSql = """

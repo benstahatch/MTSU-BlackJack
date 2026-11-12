@@ -77,6 +77,11 @@ public class AccountServiceTest {
                     connection.setAutoCommit(false);
 
                     try {
+                        try (PreparedStatement statement = connection.prepareStatement(
+                                "DELETE FROM leaderboard WHERE user_id = ?")) {
+                            statement.setLong(1, userId);
+                            statement.executeUpdate();
+                        }
                         try (PreparedStatement statement =
                                      connection.prepareStatement(
                                              "DELETE FROM wallets WHERE user_id = ?")) {

@@ -18,6 +18,7 @@ class ClientHandler(
                 output.write(line)
                 output.newLine()
                 output.flush()
+                if (line.startsWith("BANKRUPT|")) socket.close()
             }
         }
         try {
@@ -29,6 +30,13 @@ class ClientHandler(
                 val parts = raw.split('|', limit = 2)
                 val command = parts[0].trim().uppercase()
                 val argument = parts.getOrElse(1) { "" }
+
+                // Other sockets authenticated to a deleted account lose access on their next request.
+                if (authenticatedUser != null && command !in setOf("QUIT", "PING")) {
+                    val exists = try { accounts.findUser(authenticatedUser.id).isPresent }
+                    catch (_: Exception) { send("ERROR|Account service unavailable"); continue }
+                    if (!exists) { send(TableSessionManager.BANKRUPT_MESSAGE); break }
+                }
 
                 when (command) {
                     // todo: add server-side admin authorization.
@@ -66,6 +74,10 @@ class ClientHandler(
                         } catch (_: Exception) {
                             send("AUTH_ERROR|Account service unavailable; please try again")
                         }
+                    }
+                    "GET_LEADERBOARD" -> {
+                        if (authenticatedUser == null) send("ERROR|Authentication required")
+                        else send(tableSessionManager.leaderboardResponse())
                     }
                     "JOIN_TABLE" -> {
                         val user = authenticatedUser
