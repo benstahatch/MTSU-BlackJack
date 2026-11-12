@@ -105,6 +105,20 @@ class PlayerWalletPersistenceTest {
         assertEquals(BigDecimal("100570.00"), house.balanceValue)
     }
 
+    @Test fun seatedPlayerWithoutWagerNeitherBlocksTurnsNorBreaksSettlement() {
+        val wallets = MemoryWallets()
+        val scores = MemoryLeaderboard()
+        val manager = TableSessionManager(House(), wallets, shoe(TEN, TEN, KING, EIGHT), scores)
+        val alice = manager.joinTable(1, "alice") {}
+        manager.joinTable(2, "bob") {} // seated and auto opted in, but never places a wager
+        assertTrue(manager.handle(alice, "PLACE_BET", "10").startsWith("OK|"))
+        assertTrue(manager.handle(alice, "START_ROUND").startsWith("OK|"))
+        assertTrue(manager.handle(alice, "STAND").startsWith("OK|"))
+        assertEquals(BigDecimal("1010.00"), wallets.balances[1])
+        assertEquals(BigDecimal("950.00"), wallets.balances[2])
+        assertEquals(1, scores.rounds.size)
+    }
+
     @Test fun savedBalanceRejoinAndIndependentUsers() {
         val wallets = MemoryWallets()
         wallets.balances[1] = BigDecimal("1020.00")

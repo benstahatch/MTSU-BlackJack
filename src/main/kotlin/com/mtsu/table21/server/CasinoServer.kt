@@ -7,7 +7,8 @@ import kotlin.concurrent.thread
 private const val PORT = 5555
 
 fun main() {
-    val tableSessionManager = TableSessionManager()
+    ServerMetrics.serverStarted()
+    val tableSessionManager = MultiTableSessionManager()
     ServerSocket(PORT, 50, InetAddress.getByName("0.0.0.0")).use { serverSocket ->
         println("Table21 Server")
         println("Listening on port $PORT on all network interfaces...")
