@@ -76,7 +76,10 @@ class GameStatusView(private val client: CasinoClient) {
             prefViewportHeight = 420.0
             style = "-fx-background: #0A4937; -fx-background-color: #0A4937; -fx-border-color: transparent;"
         }
-        return AdminScreenStyle.root("Game Status — All Tables", onBack, listOf(
+        return AdminScreenStyle.root("Game Status — All Tables", {
+            client.setMessageListener(null)
+            onBack()
+        }, listOf(
             message, HBox(10.0, refresh), scroll,
             AdminScreenStyle.label("Each card shows the live server-side state for an independent blackjack table.")
         ))

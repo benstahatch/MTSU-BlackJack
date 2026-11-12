@@ -50,7 +50,10 @@ class PlayerView(private val client: CasinoClient) {
             }
         }
         request()
-        return AdminScreenStyle.root("Players at Table21", onBack, listOf(
+        return AdminScreenStyle.root("Players at Table21", {
+            client.setMessageListener(null)
+            onBack()
+        }, listOf(
             playersText, HBox(10.0, selection, kick, refresh), message,
             AdminScreenStyle.label("Players can only be removed between rounds so an active hand is not interrupted.")
         ))

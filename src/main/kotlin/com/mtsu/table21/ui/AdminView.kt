@@ -18,6 +18,11 @@ import javafx.scene.paint.Color
 import javafx.scene.text.Font
 import javafx.scene.layout.Region
 import javafx.scene.shape.Circle
+import com.mtsu.table21.ui.admin.ManageTableView
+import com.mtsu.table21.ui.admin.PlayerView
+import com.mtsu.table21.ui.admin.GameStatusView
+import com.mtsu.table21.ui.admin.ServerInfoView
+import javafx.scene.control.ScrollPane
 
 class AdminView (private val casinoClient: CasinoClient){
     fun getView(stage: Stage): BorderPane {
@@ -143,20 +148,31 @@ class AdminView (private val casinoClient: CasinoClient){
             textFill = Color.GOLD
             font = Font.font(24.0)
         }
-        casinoClient.setMessageListener { message ->
+        val adminMessageListener: (String) -> Unit = { message ->
             Platform.runLater {
                 when {
                     message.startsWith("HOUSE_BALANCE|") -> {
                         val balance = message.substringAfter('|').toBigDecimalOrNull()
+
                         houseBalance.text = balance?.let {
-                            "House Balance: ${java.text.NumberFormat.getCurrencyInstance(java.util.Locale.US).format(it)}"
+                            "House Balance: ${
+                                java.text.NumberFormat
+                                    .getCurrencyInstance(java.util.Locale.US)
+                                    .format(it)
+                            }"
                         } ?: "House Balance unavailable"
                     }
-                    message.startsWith("ERROR|") || message == "DISCONNECTED" ->
+
+                    message == "DISCONNECTED" -> {
                         houseBalance.text = "House Balance unavailable"
+                        serverStatus.text = "Server Disconnected"
+                        statusCircle.fill = Color.RED
+                    }
                 }
             }
         }
+
+        casinoClient.addAdminListener(adminMessageListener)
         val refreshBalance = Button("Refresh Balance")
         fun requestBalance() {
             Thread({
@@ -171,11 +187,109 @@ class AdminView (private val casinoClient: CasinoClient){
         }
         refreshBalance.setOnAction { requestBalance() }
         requestBalance()
-        root.center = VBox(10.0, goldLine, welcome, houseBalance, refreshBalance, grid)
+
+        // Admin information on the left side
+        val adminInfo = VBox(
+            12.0,
+            welcome,
+            houseBalance,
+            refreshBalance
+        )
+
+        adminInfo.alignment = Pos.CENTER_LEFT
+        adminInfo.padding = Insets(15.0, 0.0, 15.0, 0.0)
+
+// Keep the refresh button from stretching
+        refreshBalance.prefWidth = 170.0
+        refreshBalance.maxWidth = 170.0
+
+// Main content
+        val mainContent = VBox(
+            20.0,
+            goldLine,
+            adminInfo,
+            grid
+        )
+
+        mainContent.padding = Insets(10.0)
+        mainContent.alignment = Pos.TOP_LEFT
+
+        val scrollPane = ScrollPane(mainContent)
+
+        scrollPane.isFitToWidth = true
+        scrollPane.hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER
+        scrollPane.vbarPolicy = ScrollPane.ScrollBarPolicy.AS_NEEDED
+
+        scrollPane.style = """
+            -fx-background: #063D2B;
+            -fx-background-color: #063D2B;
+            -fx-border-color: transparent;
+        """
+
+        root.center = scrollPane
+
+        // Open an admin subview while keeping the main AdminView available
+        fun openAdminScreen(view: VBox) {
+            val subviewScroll = ScrollPane(view)
+
+            subviewScroll.isFitToWidth = true
+            subviewScroll.hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER
+            subviewScroll.vbarPolicy = ScrollPane.ScrollBarPolicy.AS_NEEDED
+
+            subviewScroll.style = """
+                -fx-background: #063D2B;
+                -fx-background-color: #063D2B;
+                -fx-border-color: transparent;
+            """
+
+            root.center = subviewScroll
+        }
+
+        // Return to the original Admin Panel
+        fun backToAdminPanel() {
+            root.center = scrollPane
+        }
+
+// Manage Tables
+        tableButton.setOnAction {
+            openAdminScreen(
+                ManageTableView(casinoClient).getView {
+                    backToAdminPanel()
+                }
+            )
+        }
+
+// View Players
+        playerButton.setOnAction {
+            openAdminScreen(
+                PlayerView(casinoClient).getView {
+                    backToAdminPanel()
+                }
+            )
+        }
+
+// Game Status
+        statusButton.setOnAction {
+            openAdminScreen(
+                GameStatusView(casinoClient).getView {
+                    backToAdminPanel()
+                }
+            )
+        }
+
+// Server Information
+        serverButton.setOnAction {
+            openAdminScreen(
+                ServerInfoView(casinoClient).getView {
+                    backToAdminPanel()
+                }
+            )
+        }
 
         //logout action
         logoutButton.setOnAction{
             casinoClient.setMessageListener(null)
+            casinoClient.removeAdminListener(adminMessageListener)
             casinoClient.disconnect()
             val login=LoginView(casinoClient)
             val scene = Scene(login.getView(stage), 800.0, 600.0)

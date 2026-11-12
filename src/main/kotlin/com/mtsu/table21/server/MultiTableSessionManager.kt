@@ -30,6 +30,9 @@ class MultiTableSessionManager private constructor(
     fun houseBalance(): String = tables["1"]!!.session.houseBalance()
 
     @Synchronized
+    fun leaderboardResponse(): String = tables["1"]!!.session.leaderboardResponse()
+
+    @Synchronized
     fun subscribeToTableList(connectionId: String, send: (String) -> Unit) {
         lobbyListeners[connectionId] = send
         send(tableList())

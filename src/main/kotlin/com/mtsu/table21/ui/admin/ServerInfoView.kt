@@ -33,7 +33,10 @@ class ServerInfoView(private val client: CasinoClient) {
         } }
         refresh.setOnAction { client.sendCommand("GET_ADMIN_SERVER"); client.sendCommand("GET_HOUSE_BALANCE") }
         refresh.fire()
-        return AdminScreenStyle.root("Server Information", onBack, listOf(
+        return AdminScreenStyle.root("Server Information", {
+            client.setMessageListener(null)
+            onBack()
+        }, listOf(
             server, house, HBox(10.0, refresh), message,
             AdminScreenStyle.label("Connection count and uptime are process-level server metrics. Database credentials are not displayed here.")
         ))

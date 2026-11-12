@@ -23,6 +23,8 @@ class CasinoClient(
         private set
     @Volatile var authenticatedUsername: String? = null
         private set
+    @Volatile var isAdmin: Boolean = false
+        private set
     private var sessionPlayerId: String? = null
 
     fun login(username: String, password: String) = authenticate("LOGIN", username, password)
@@ -36,6 +38,7 @@ class CasinoClient(
     private fun clearSession() {
         authenticatedUserId = null
         authenticatedUsername = null
+        isAdmin = false
         playerBalance = null
         sessionPlayerId = null
     }
@@ -51,6 +54,11 @@ class CasinoClient(
     @Volatile private var input: BufferedReader? = null
     @Volatile private var output: BufferedWriter? = null
     @Volatile private var listener: ((String) -> Unit)? = null
+
+    // Additional listeners for admin screens
+    private val adminListeners =
+        java.util.concurrent.CopyOnWriteArrayList<(String) -> Unit>()
+
     private val connected = AtomicBoolean(false)
     private val writeLock = Any()
 
@@ -59,6 +67,14 @@ class CasinoClient(
 
     fun setMessageListener(callback: ((String) -> Unit)?) {
         listener = callback
+    }
+
+    fun addAdminListener(callback: (String) -> Unit) {
+        adminListeners.add(callback)
+    }
+
+    fun removeAdminListener(callback: (String) -> Unit) {
+        adminListeners.remove(callback)
     }
 
     @Synchronized
@@ -99,6 +115,7 @@ class CasinoClient(
                     clearSession()
                     bankruptcyListener?.invoke()
                     listener?.invoke(line)
+                    adminListeners.forEach { it(line) }
                     break
                 }
                 if (line.startsWith("AUTH_OK|")) {
@@ -106,6 +123,7 @@ class CasinoClient(
                     authenticatedUserId = fields[1].toLong()
                     authenticatedUsername = String(java.util.Base64.getUrlDecoder().decode(fields[2]), Charsets.UTF_8)
                     updatePlayerBalance(fields[3].toDouble())
+                    isAdmin = fields.getOrNull(4) == "ADMIN"
                 }
                 if (line.startsWith("STATE|")) {
                     line.split('|').getOrNull(6)?.split(',')?.filter { it.isNotEmpty() }?.forEach {
@@ -118,6 +136,7 @@ class CasinoClient(
                     line.split('|').getOrNull(3)?.toDoubleOrNull()?.let(::updatePlayerBalance)
                 }
                 listener?.invoke(line)
+                adminListeners.forEach { it(line) }
             }
         } catch (_: Exception) {
             // A closed socket ends the reader loop.
@@ -126,6 +145,7 @@ class CasinoClient(
                 if (socket === connection) {
                     disconnect()
                     listener?.invoke("DISCONNECTED")
+                    adminListeners.forEach { it("DISCONNECTED") }
                 }
             }
         }

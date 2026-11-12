@@ -162,7 +162,10 @@ class ManageTableView(private val client: CasinoClient) {
         requestTables()
         return AdminScreenStyle.root(
             "Manage Blackjack Tables",
-            onBack,
+            {
+                client.setMessageListener(null)
+                onBack()
+            },
             listOf(summary, refresh, message, scrollPane as Node,
                 AdminScreenStyle.label("Each card shows the status of one server table. Tables can only be opened or closed between rounds."))
         )
