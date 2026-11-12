@@ -13,14 +13,14 @@ import javafx.scene.paint.Color
 import javafx.scene.text.Font
 import javafx.stage.Stage
 
-/** Temporary guest entry screen. Account persistence/authentication is not connected yet. */
+/** Creates an account through the casino server and signs it in. */
 class CreateUser(private val casinoClient: CasinoClient) {
     fun getView(stage: Stage): VBox {
         val title = Label("Create Account").apply { font = Font.font(32.0) }
         val usernameField = TextField().apply { promptText = "Enter username"; maxWidth = 300.0 }
         val passwordField = PasswordField().apply { promptText = "Enter password"; maxWidth = 300.0 }
         val message = Label()
-        val createButton = Button("Continue as Guest").apply { prefWidth = 300.0 }
+        val createButton = Button("Create Account").apply { prefWidth = 300.0 }
         val backButton = Button("Back to Login").apply { prefWidth = 300.0 }
 
         createButton.setOnAction {
@@ -32,10 +32,36 @@ class CreateUser(private val casinoClient: CasinoClient) {
                 message.text = "Could not connect to Table21 server."
                 message.textFill = Color.RED
             } else {
-                message.text = "Connected. Account saving is not enabled yet; continuing as a guest."
-                message.textFill = Color.GREEN
-                val lobby = LobbyView(casinoClient)
-                stage.scene = Scene(lobby.getView(username, stage), 800.0, 600.0)
+                createButton.isDisable = true
+                backButton.isDisable = true
+                casinoClient.setMessageListener { response ->
+                    javafx.application.Platform.runLater {
+                        if (response.startsWith("AUTH_OK|")) {
+                            passwordField.clear()
+                            casinoClient.setMessageListener(null)
+                            val authenticatedName = casinoClient.authenticatedUsername
+                            if (authenticatedName != null) {
+                                stage.scene = Scene(LobbyView(casinoClient).getView(
+                                    authenticatedName, stage), 800.0, 600.0)
+                            } else {
+                                stage.scene = Scene(LoginView(casinoClient).getView(stage), 800.0, 600.0)
+                            }
+                        } else if (response.startsWith("AUTH_ERROR|") || response == "DISCONNECTED") {
+                            createButton.isDisable = false
+                            backButton.isDisable = false
+                            message.text = response.substringAfter('|')
+                            message.textFill = Color.RED
+                        }
+                    }
+                }
+                val result = casinoClient.register(username, passwordField.text)
+                passwordField.clear()
+                if (result != "SENT") {
+                    createButton.isDisable = false
+                    backButton.isDisable = false
+                    message.text = "Could not send credentials; reconnect and try again."
+                    message.textFill = Color.RED
+                }
             }
         }
         backButton.setOnAction { stage.scene = Scene(LoginView(casinoClient).getView(stage), 800.0, 600.0) }

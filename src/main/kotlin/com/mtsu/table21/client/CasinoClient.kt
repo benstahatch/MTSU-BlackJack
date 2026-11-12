@@ -19,6 +19,27 @@ class CasinoClient(
             environment["TABLE21_SERVER_PORT"]?.toIntOrNull()?.takeIf { it in 1..65535 } ?: 5555
     }
 
+    @Volatile var authenticatedUserId: Long? = null
+        private set
+    @Volatile var authenticatedUsername: String? = null
+        private set
+    private var sessionPlayerId: String? = null
+
+    fun login(username: String, password: String) = authenticate("LOGIN", username, password)
+    fun register(username: String, password: String) = authenticate("REGISTER", username, password)
+    private fun authenticate(command: String, username: String, password: String): String {
+        fun encode(value: String) = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(value.toByteArray(Charsets.UTF_8))
+        return sendCommand("$command|${encode(username)}|${encode(password)}")
+    }
+
+    private fun clearSession() {
+        authenticatedUserId = null
+        authenticatedUsername = null
+        playerBalance = null
+        sessionPlayerId = null
+    }
+
     @Volatile var playerBalance: Double? = null
         private set
 
@@ -55,7 +76,7 @@ class CasinoClient(
                 input = newInput
                 output = newOutput
                 connected.set(true)
-                Thread({ readLoop(newInput) }, "Table21-client-reader").apply {
+                Thread({ readLoop(newInput, newSocket) }, "Table21-client-reader").apply {
                     isDaemon = true
                     start()
                 }
@@ -67,11 +88,24 @@ class CasinoClient(
         }
     }
 
-    private fun readLoop(reader: BufferedReader) {
+    private fun readLoop(reader: BufferedReader, connection: Socket) {
         try {
-            while (connected.get()) {
+            while (connected.get() && socket === connection) {
                 val line = reader.readLine() ?: break
+                if (line.startsWith("AUTH_OK|")) {
+                    val fields = line.split('|')
+                    authenticatedUserId = fields[1].toLong()
+                    authenticatedUsername = String(java.util.Base64.getUrlDecoder().decode(fields[2]), Charsets.UTF_8)
+                    updatePlayerBalance(fields[3].toDouble())
+                }
+                if (line.startsWith("STATE|")) {
+                    line.split('|').getOrNull(6)?.split(',')?.filter { it.isNotEmpty() }?.forEach {
+                        val fields = String(java.util.Base64.getUrlDecoder().decode(it), Charsets.UTF_8).split('~')
+                        if (fields[0] == sessionPlayerId) updatePlayerBalance(fields[3].toDouble())
+                    }
+                }
                 if (line.startsWith("JOINED|")) {
+                    sessionPlayerId = line.split('|')[1]
                     line.split('|').getOrNull(3)?.toDoubleOrNull()?.let(::updatePlayerBalance)
                 }
                 listener?.invoke(line)
@@ -79,8 +113,12 @@ class CasinoClient(
         } catch (_: Exception) {
             // A closed socket ends the reader loop.
         } finally {
-            connected.set(false)
-            listener?.invoke("DISCONNECTED")
+            synchronized(this) {
+                if (socket === connection) {
+                    disconnect()
+                    listener?.invoke("DISCONNECTED")
+                }
+            }
         }
     }
 
@@ -105,6 +143,7 @@ class CasinoClient(
     @Synchronized
     fun disconnect() {
         connected.set(false)
+        clearSession()
         try { socket?.close() } catch (_: Exception) { }
         socket = null
         input = null

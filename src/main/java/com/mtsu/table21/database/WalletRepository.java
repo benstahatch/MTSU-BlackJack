@@ -76,6 +76,23 @@ public class WalletRepository {
         throw new SQLException("Wallet not found for user: " + userId);
     }
 
+    /** Save the authoritative server balance; never creates a missing wallet. */
+    public void setBalance(long userId, BigDecimal balance) throws SQLException {
+        if (balance == null || balance.signum() < 0) {
+            throw new IllegalArgumentException("Balance cannot be negative.");
+        }
+        balance = balance.setScale(2, java.math.RoundingMode.UNNECESSARY);
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "UPDATE wallets SET balance = ? WHERE user_id = ?")) {
+            statement.setBigDecimal(1, balance);
+            statement.setLong(2, userId);
+            if (statement.executeUpdate() != 1) {
+                throw new SQLException("Player wallet unavailable.");
+            }
+        }
+    }
+
     public boolean addChips(long userId, BigDecimal amount)
             throws SQLException {
 

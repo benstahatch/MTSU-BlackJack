@@ -163,7 +163,19 @@ class BlackjackTableView(
             if (amount == null || !amount.isFinite() || amount <= 0.0) statusLabel.text = "Enter a valid bet greater than zero."
             else send("PLACE_BET|$amount")
         }
-        dealButton.setOnAction { send("START_ROUND") }
+        dealButton.setOnAction {
+            val mine = playerState.firstOrNull { it.id == myPlayerId }
+            if (phase == "DEALER" || mine?.optedIn != true) {
+                send("START_ROUND")
+            } else {
+                val amount = betInput.text.trim().toDoubleOrNull()
+                if (amount == null || !amount.isFinite() || amount <= 0.0) {
+                    statusLabel.text = "Enter a valid bet greater than zero."
+                } else {
+                    send("START_ROUND|$amount")
+                }
+            }
+        }
         hitButton.setOnAction { send("HIT") }
         standButton.setOnAction { send("STAND") }
         splitButton.setOnAction { send("SPLIT") }
@@ -252,7 +264,10 @@ class BlackjackTableView(
                 }
                 val totals = p.hands.map { cards -> handTotal(cards) }
                 val totalText = if (totals.size > 1) "Totals: ${totals.joinToString(" / ")}" else "Total: ${totals.firstOrNull() ?: 0}"
-                playerInfo[seat].text = "$totalText   Bet: ${money(p.bet)}   Chips: ${money(p.balance)}   ${p.result}"
+                val pendingBet = p.optedIn && (phase == "WAITING" || phase == "FINISHED")
+                val betLabel = if (pendingBet) "Pending bet" else "Bet"
+                val handLabel = if (pendingBet && phase == "FINISHED") "Previous $totalText" else totalText
+                playerInfo[seat].text = "$handLabel   $betLabel: ${money(p.bet)}   Chips: ${money(p.balance)}   ${p.result}"
             } else playerInfo[seat].text = ""
         }
 
@@ -275,6 +290,7 @@ class BlackjackTableView(
             val active = playerState.firstOrNull { it.id == currentPlayerId }
             statusLabel.text = if (myTurn) "Your turn — Player ${mySeat + 1}" else "${active?.name ?: "Waiting"}'s turn"
         } else if (phase == "DEALER") statusLabel.text = "Settlement pending. Retry payout after the server issue is resolved."
+        else if (betweenRounds && mine?.optedIn == true) statusLabel.text = "Enter your wager, then press Deal to bet and start the round."
         else if (phase == "FINISHED") statusLabel.text = "Round finished. Choose Play This Round to join the next round."
         else if (mine != null) statusLabel.text = "Choose Play This Round, then set your bet."
     }
