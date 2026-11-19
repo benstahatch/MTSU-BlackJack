@@ -15,6 +15,7 @@ import javafx.scene.layout.HBox
 import javafx.scene.layout.Pane
 import javafx.scene.layout.StackPane
 import javafx.scene.paint.Color
+import javafx.scene.media.AudioClip
 import javafx.scene.text.Font
 import javafx.scene.text.FontWeight
 import java.util.Base64
@@ -38,6 +39,11 @@ class BlackjackTableView(
     private var dealerHidden = true
     private var dealerCardsState: List<Card> = emptyList()
     private var playerState: List<PlayerSnapshot> = emptyList()
+    private var previousVisibleCardCount = 0
+    private var receivedFirstState = false
+    private val cardSound: AudioClip? = javaClass.getResource("/sounds/freesound_community-flipcard-91468.mp3")?.toExternalForm()?.let {
+        try { AudioClip(it).apply { volume = 0.35 } } catch (_: Exception) { null }
+    }
 
     private val designContainer = StackPane().apply {
         setMinSize(800.0, 600.0)
@@ -103,11 +109,18 @@ class BlackjackTableView(
         for (i in 0..3) {
             val (x, y) = positions[i]
             playerNames[i].apply { font = Font.font("Georgia", FontWeight.BOLD, 14.0); textFill = GOLD }
-            place(playerNames[i], x, y, 160.0); tablePane.children.add(playerNames[i])
-            playerCards[i].apply { alignment = Pos.CENTER_LEFT; layoutX = x; layoutY = y + 25.0; prefWidth = 340.0; prefHeight = 65.0 }
+            place(playerNames[i], x, y + if (i < 2) 30.0 else 0.0, 340.0); tablePane.children.add(playerNames[i])
+            playerCards[i].apply {
+                alignment = if (i % 2 == 1) Pos.CENTER_RIGHT
+                else
+                    Pos.CENTER_LEFT; layoutX = x; layoutY = y + 25.0 + if (i < 2) 30.0 else 0.0; prefWidth = 340.0; prefHeight = 65.0 }
             tablePane.children.add(playerCards[i])
-            playerInfo[i].apply { font = Font.font("Arial", FontWeight.BOLD, 11.0); textFill = Color.WHITE }
-            place(playerInfo[i], x, y + 95.0, 340.0); tablePane.children.add(playerInfo[i])
+            playerInfo[i].apply { alignment = if (i % 2 == 1)
+                Pos.CENTER_RIGHT
+            else
+                Pos.CENTER_LEFT
+                font = Font.font("Arial", FontWeight.BOLD, 11.0); textFill = Color.WHITE }
+            place(playerInfo[i], x, y + 95.0 + if (i < 2) 30.0 else 0.0, 340.0); tablePane.children.add(playerInfo[i])
         }
         statusLabel.apply {
             font = Font.font("Arial", FontWeight.BOLD, 12.0); textFill = Color.WHITE
@@ -115,12 +128,12 @@ class BlackjackTableView(
         }
         place(statusLabel, 185.0, 465.0, 430.0, 35.0); tablePane.children.add(statusLabel)
         val betPrompt = Label("Your bet:").apply { font = Font.font("Arial", FontWeight.BOLD, 12.0); textFill = GOLD }
-        place(betPrompt, 650.0, 450.0, 100.0); tablePane.children.add(betPrompt)
+        place(betPrompt, 650.0, 470.0, 100.0); tablePane.children.add(betPrompt)
         betInput.apply {
             prefWidth = 95.0; prefHeight = 27.0
             style = "-fx-background-color: #F5F0DF; -fx-text-fill: #153D2E; -fx-font-weight: bold; -fx-background-radius: 5;"
         }
-        place(betInput, 650.0, 475.0, 95.0); tablePane.children.add(betInput)
+        place(betInput, 650.0, 495.0, 95.0); tablePane.children.add(betInput)
 
         listOf(optInButton, sitOutButton, betButton, dealButton, hitButton, standButton, splitButton, doubleButton, quitButton)
             .forEach { styleButton(it) }
@@ -211,6 +224,12 @@ class BlackjackTableView(
             line.startsWith("OK|") -> statusLabel.text = line.substringAfter('|')
             line.startsWith("STATE|") -> parseState(line)
             line == "LEFT" -> statusLabel.text = "You left the table."
+            line.startsWith("KICKED|") -> {
+                statusLabel.text = line.substringAfter('|')
+                casinoClient.sendCommand("LEAVE_TABLE")
+                casinoClient.setMessageListener(null)
+                onQuit()
+            }
         }
     }
 
@@ -231,6 +250,12 @@ class BlackjackTableView(
             } catch (_: Exception) { null }
         }
         playerState.firstOrNull { it.id == myPlayerId }?.let { casinoClient.updatePlayerBalance(it.balance) }
+        val visibleCardCount = dealerCardsState.size + playerState.sumOf { player -> player.hands.sumOf { it.size } }
+        if (receivedFirstState && visibleCardCount > previousVisibleCardCount) {
+            cardSound?.play()
+        }
+        previousVisibleCardCount = visibleCardCount
+        receivedFirstState = true
         updateView()
     }
 
@@ -260,9 +285,19 @@ class BlackjackTableView(
             val p = playerState.firstOrNull { it.seat == seat }
             playerNames[seat].text = p?.name ?: "Seat ${seat + 1} — Empty"
             playerCards[seat].children.clear()
-            playerCards[seat].nodeOrientation = if (seat == 1 || seat == 3) NodeOrientation.RIGHT_TO_LEFT else NodeOrientation.LEFT_TO_RIGHT
-            playerCards[seat].alignment = if (seat == 1 || seat == 3) Pos.CENTER_RIGHT else Pos.CENTER_LEFT
-            playerNames[seat].alignment = if (seat == 1 || seat == 3) Pos.CENTER_RIGHT else Pos.CENTER_LEFT
+            playerCards[seat].nodeOrientation =
+                if (seat % 2 == 1)
+                    NodeOrientation.RIGHT_TO_LEFT
+                else
+                    NodeOrientation.LEFT_TO_RIGHT
+            playerCards[seat].alignment = if (seat % 2 == 1)
+                Pos.CENTER_LEFT
+            else
+                Pos.CENTER_LEFT
+            playerNames[seat].alignment = if (seat % 2 == 1)
+                Pos.CENTER_RIGHT
+            else
+                Pos.CENTER_LEFT
             if (p != null) {
                 p.hands.forEachIndexed { handIndex, cards ->
                     if (handIndex > 0) playerCards[seat].children.add(Label(" | ").apply { textFill = GOLD })
