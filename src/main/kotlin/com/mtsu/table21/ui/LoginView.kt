@@ -26,7 +26,9 @@ class LoginView(private val casinoClient: CasinoClient) {
         val quitButton = Button("QUIT").apply { prefWidth = 300.0 }
         val message = Label()
 
-        loginButton.setOnAction {
+        // adminOnly = true is used by the ADMIN button: it signs in with the typed
+        // credentials and opens the admin screen only if the server marks the account as ADMIN.
+        fun attemptLogin(adminOnly: Boolean) {
             val username = usernameField.text.trim()
             if (username.isBlank() || passwordField.text.isBlank()) {
                 message.text = "Please enter your username and password."
@@ -44,7 +46,18 @@ class LoginView(private val casinoClient: CasinoClient) {
                             passwordField.clear()
                             casinoClient.setMessageListener(null)
                             val authenticatedName = casinoClient.authenticatedUsername
-                            if (authenticatedName != null) {
+                            if (adminOnly) {
+                                if (casinoClient.isAdmin) {
+                                    stage.scene = Scene(AdminView(casinoClient).getView(stage), 800.0, 600.0)
+                                } else {
+                                    casinoClient.disconnect()
+                                    loginButton.isDisable = false
+                                    createUserButton.isDisable = false
+                                    adminButton.isDisable = false
+                                    message.text = "This account does not have administrator access."
+                                    message.textFill = Color.RED
+                                }
+                            } else if (authenticatedName != null) {
                                 stage.scene = Scene(LobbyView(casinoClient).getView(
                                     authenticatedName, stage), 800.0, 600.0)
                             } else {
@@ -71,17 +84,11 @@ class LoginView(private val casinoClient: CasinoClient) {
             }
         }
 
+        loginButton.setOnAction { attemptLogin(false) }
         createUserButton.setOnAction {
             stage.scene = Scene(CreateUser(casinoClient).getView(stage), 800.0, 600.0)
         }
-        adminButton.setOnAction {
-            if (!casinoClient.isConnected() && !casinoClient.connect()) {
-                message.text = "Could not connect to server."
-                message.textFill = Color.RED
-            } else {
-                stage.scene = Scene(AdminView(casinoClient).getView(stage), 800.0, 600.0)
-            }
-        }
+        adminButton.setOnAction { attemptLogin(true) }
         quitButton.setOnAction {
             casinoClient.disconnect()
             javafx.application.Platform.exit()

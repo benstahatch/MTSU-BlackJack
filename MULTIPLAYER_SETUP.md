@@ -55,7 +55,7 @@ All computers must be on the same Wi-Fi/LAN. The server computer must remain on 
 
 - This integration currently runs one shared table (`Table #1`) with up to four seats. The lobby's Join/Create actions both enter that shared table; a multi-table directory and independently created table IDs are not implemented yet.
 - The server owns the shoe, hands, turns, bets, and payouts while the server process is running.
-- Player wallets are loaded from MySQL by authenticated user ID at table join. The server saves the resulting balance after initial wagers, additional split/double wagers, push refunds, ordinary wins, and blackjack payouts. Zero-balance accounts remain valid.
+- Player wallets are loaded from MySQL by authenticated user ID at table join. The server saves the resulting balance after initial wagers, additional split/double wagers, push refunds, ordinary wins, and blackjack payouts. An account reaching zero after completed settlement ends its arcade run (see Bankruptcy below).
 - LOGIN and REGISTER send URL-safe Base64 encoded credentials to the server. Base64 is only protocol encoding, not security. TODO: production credentials need encrypted transport/TLS; TLS is not implemented here. Raw requests and passwords must never be logged.
 - JOIN_TABLE uses the authenticated socket identity and ignores any supplied username. One account can have only one table session, including a disconnected session awaiting round settlement. Reconnect and log in again to establish a new socket session.
 - The client retains the authenticated ID, username, and latest server-reported balance. Logout clears them. The lobby does not calculate wallet balances.
@@ -63,7 +63,7 @@ All computers must be on the same Wi-Fi/LAN. The server computer must remain on 
 - Admin requests the house balance separately; it is never included in table broadcasts. Server-side admin authorization is still a TODO, so the command is not yet access-controlled.
 - If the house cannot pay or the database is unavailable at settlement, the round remains pending. After correcting the problem, use **Retry Payout** (`START_ROUND`) to retry settlement. There is no automatic refill.
 - House transfers, in-memory balances, and individual player wallet writes are not one durable transaction. A crash, partial write, or uncertain database commit can require manual reconciliation. If a player write fails after a transfer, the server reports an error and halts the table; do not retry payouts or restart play until the operator reconciles player and house balances. A server restart clears this halt, so reconciliation must happen first. No distributed transaction or crash recovery system is implemented.
-- Run a single casino server against these wallets. Cross-server account locking, analytics, and game-history reporting are outside this task.
+- Run a single casino server against these wallets. Cross-server account locking, analytics, and a history-reporting screen are outside this task. Completed multiplayer hands are now recorded.
 
 ## Database access and manual persistence check
 
@@ -83,3 +83,54 @@ to initialize MySQL. Clients never connect to MySQL and need only optional
    into the first account. Invalid passwords must not open the lobby.
 7. Optionally restart the server between completed rounds and repeat login to
    verify that the balance comes from MySQL, not server memory.
+
+## Player leaderboard protocol
+
+Apply database migrations V006 and V007 before running this version (see
+[database setup](database/README.md)). An authenticated player can use the lobby's
+**Leaderboard** button. The screen shows Rank, Player, High Score, Peak Profit, and
+Wins, with a Back button. It exposes no house or Admin statistics.
+
+`GET_LEADERBOARD` requires authentication. The reply is:
+
+```text
+LEADERBOARD|rank~base64Username~peakBalance~peakProfit~wins,...
+```
+
+An empty leaderboard is `LEADERBOARD|`. There are at most 20 rows. Usernames use
+URL-safe Base64 to protect delimiters. Failures return `ERROR|...`. Database IDs,
+passwords/hashes, and house data are never part of this response.
+
+## Bankruptcy
+
+After final settlement and successful history/score recording, a zero wallet ends
+the active account. The server sends:
+
+```text
+BANKRUPT|Your run is over. Your high score has been saved. Create a new account for a fresh $1,000 and try to beat the house again.
+```
+
+The socket closes and client authentication/balance are cleared. The client shows
+“You went broke! Your high score has been saved. Create a new account for a free
+$1,000 and try to beat the house again.” Acknowledging returns to Login/Create Account.
+The previous account cannot log in, but its leaderboard and history survive.
+
+### Manual leaderboard and bankruptcy check
+
+1. Restart the migrated server and client. Create a disposable test account.
+2. In the lobby open Leaderboard; the new run starts at $1,000 (it appears only if
+   it qualifies for the Top 20). Return and play a completed round.
+3. Check that a new peak increases the score; subsequent losses do not reduce it.
+   Pushes do not add wins. A split produces two history rows with one round ID.
+4. On the disposable account, wager its entire current balance and play to completion.
+   If it wins or pushes, repeat until a loss; no database balance editing is required.
+5. Confirm the bankruptcy message appears only after settlement, acknowledge it,
+   and verify the old credentials no longer log in.
+6. Register a new account, open Leaderboard, and confirm the prior score still
+   appears if it ranks in the Top 20. Scores outside the Top 20 remain in MySQL.
+7. For database verification, locate the disposable account's username snapshot in
+   `leaderboard`: `user_id` is null, peak/wins remain, and `game_history` rows retain
+   its `leaderboard_id` with null `user_id`. The original user/wallet rows are gone.
+
+Use disposable accounts for this test: bankruptcy intentionally deletes the active
+account. No Admin roles/dashboard, account recovery, or automatic house refill are added.

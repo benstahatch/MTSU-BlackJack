@@ -21,6 +21,17 @@ public class GameHistoryRepository {
             boolean wasDoubledDown
     ) throws SQLException {
 
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            saveGame(connection, roundId, userId, handIndex, result, betAmount,
+                    payoutAmount, wasSplit, wasDoubledDown);
+        }
+    }
+
+    /** Caller owns the transaction. The unique hand keys make repeated saves idempotent. */
+    public void saveGame(Connection connection, String roundId, long userId, int handIndex,
+                         String result, BigDecimal betAmount, BigDecimal payoutAmount,
+                         boolean wasSplit, boolean wasDoubledDown) throws SQLException {
+
         if (roundId == null || roundId.isBlank() || roundId.length() > 36) {
             throw new IllegalArgumentException("Invalid round ID");
         }
@@ -41,12 +52,12 @@ public class GameHistoryRepository {
         String sql = """
                 INSERT INTO game_history
                 (round_id, user_id, hand_index, result, bet_amount,
-                 payout_amount, was_split, was_doubled_down)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 payout_amount, was_split, was_doubled_down, leaderboard_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM leaderboard WHERE user_id = ?))
+                ON DUPLICATE KEY UPDATE id = id
                 """;
 
-        try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
 
             statement.setString(1, roundId);
             statement.setLong(2, userId);
@@ -56,6 +67,7 @@ public class GameHistoryRepository {
             statement.setBigDecimal(6, payoutAmount);
             statement.setBoolean(7, wasSplit);
             statement.setBoolean(8, wasDoubledDown);
+            statement.setLong(9, userId);
 
             statement.executeUpdate();
         }
