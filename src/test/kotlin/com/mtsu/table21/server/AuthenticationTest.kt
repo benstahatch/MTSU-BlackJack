@@ -98,14 +98,26 @@ class AuthenticationTest {
             fun session(action: (CasinoClient, LinkedBlockingQueue<String>) -> Unit) {
                 val client = CasinoClient("127.0.0.1", server.localPort)
                 val messages = LinkedBlockingQueue<String>()
+
                 client.setMessageListener { messages.add(it) }
-                try { assertTrue(client.connect()); action(client, messages) }
-                finally { client.disconnect() }
+
+                try {
+                  assertTrue(client.connect())
+                  action(client, messages)
+                } finally {
+                    client.disconnect()
+                }
+
                 assertNull(client.authenticatedUserId)
                 assertNull(client.playerBalance)
             }
-            fun reply(messages: LinkedBlockingQueue<String>): String =
-                messages.poll(10, TimeUnit.SECONDS) ?: error("No server response")
+
+
+            fun reply(messages: LinkedBlockingQueue<String>): String {
+              return messages.poll(10, TimeUnit.SECONDS)
+                ?: error("No server response")
+            }
+
             try {
                 session { client, messages ->
                     client.sendCommand("GET_LEADERBOARD")
@@ -129,15 +141,37 @@ class AuthenticationTest {
                     assertFalse(leaders.contains("HOUSE"))
                     assertFalse(leaders.contains(password))
                     assertFalse(leaders.contains("password_hash"))
-                    client.sendCommand("JOIN_TABLE|spoofed")
+
+                    // join the default blackjack table
+                    client.sendCommand("JOIN_TABLE|1")
+
+                    // confirm the player joined
                     assertTrue(reply(messages).startsWith("JOINED|"))
+
+                    // confirm the server reports the joined table
+                    assertTrue(reply(messages).startsWith("TABLE_JOINED|"))
+
+                    // get the updated shared game state
                     val state = reply(messages)
-                    val record = String(java.util.Base64.getUrlDecoder().decode(state.split('|')[6])).split('~')
-                    assertEquals(username, String(java.util.Base64.getUrlDecoder().decode(record[2])))
+                    assertTrue(state.startsWith("STATE|"))
+
+                    // decode the player record from the game state
+                    val record = String(
+                        java.util.Base64.getUrlDecoder().decode(state.split('|')[6])
+                    ).split('~')
+
+                    // confirm the server used the authenticated username
+                    assertEquals(
+                        username,
+                        String(java.util.Base64.getUrlDecoder().decode(record[2]))
+                    )
+
                     client.sendCommand("LEAVE_TABLE")
                     assertEquals("LEFT", reply(messages))
                 }
+
                 WalletRepository().setBalance(userId!!, BigDecimal("1010.00"))
+
                 session { client, messages ->
                     client.login(username, "incorrect")
                     assertEquals("AUTH_ERROR|Invalid username or password", reply(messages))
@@ -147,6 +181,7 @@ class AuthenticationTest {
                     assertEquals(userId, client.authenticatedUserId)
                     assertEquals(1010.0, client.playerBalance)
                 }
+
                 session { client, messages ->
                     client.login(username, password)
                     assertTrue(reply(messages).startsWith("AUTH_OK|"))
@@ -162,7 +197,8 @@ class AuthenticationTest {
                         listOf("leaderboard", "wallets", "users").forEach { table ->
                             val column = if (table != "users") "user_id" else "id"
                             connection.prepareStatement("DELETE FROM $table WHERE $column = ?").use {
-                                it.setLong(1, id); it.executeUpdate()
+                                it.setLong(1, id)
+                                it.executeUpdate()
                             }
                         }
                     }
